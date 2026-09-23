@@ -1,0 +1,98 @@
+[
+  {
+    "module": "science",
+    "function": "to_float",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "product_wavelength",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "nearest_product",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "decode_flag_metadata",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "flag_is_set",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "locate_l2_flags",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "ci_family",
+    "notebook_cell": 30,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "ndci_index",
+    "notebook_cell": 20,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "_spectral_line_height",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "science",
+    "function": "additional_olci_indices",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "statistics",
+    "function": "compact_stats",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "statistics",
+    "function": "_mask_values_from_ds",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "compact",
+    "function": "_append_float",
+    "notebook_cell": 44,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "compact",
+    "function": "_membership_block",
+    "notebook_cell": 44,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "compact",
+    "function": "extract_lake_only_netcdf",
+    "notebook_cell": 57,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "compact",
+    "function": "_open_compact_writer_v264",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  }
+]

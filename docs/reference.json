@@ -1,0 +1,122 @@
+{
+  "notebook_name": "S3_OLCI_L2Gen_CyanoLake_GLOBAL_EFFICIENT_v2_6_8_NATIVE_FIRST_CYAN_COMPARISON (1).ipynb",
+  "sha256": "044cbc3395645362788f0da2669c8f23d1ad9deff77d92738de21fe00fdf6c67",
+  "columns": [
+    "scene_id",
+    "scene_name",
+    "acquisition_start",
+    "window_id",
+    "Hylak_id",
+    "Lake_name",
+    "Lake_area_km2",
+    "Country",
+    "Continent",
+    "native_polygon_pixels",
+    "retained_pixels",
+    "retained_percent",
+    "cyan_strict_pixels",
+    "bloom_rescued_pixels",
+    "CLDICE_pixels",
+    "ci_input_valid_pixels",
+    "ci_candidate_pixels",
+    "ci_cyano_detection_pixels",
+    "ci_cyano_detection_fraction_of_ci_valid",
+    "ci_cyano_detection_fraction_of_retained",
+    "CI_mean_candidates",
+    "CI_median_candidates",
+    "CI_p10_candidates",
+    "CI_p90_candidates",
+    "CI_max_candidates",
+    "CIcyano_mean_detections",
+    "CIcyano_median_detections",
+    "CIcyano_p90_detections",
+    "NDCI_mean_retained",
+    "NDCI_median_retained",
+    "NDCI_p90_retained",
+    "compact_netcdf",
+    "MPH_mean_retained",
+    "MPH_median_retained",
+    "MPH_p10_retained",
+    "MPH_p90_retained",
+    "MPH_max_retained",
+    "FAI_mean_retained",
+    "FAI_median_retained",
+    "FAI_p10_retained",
+    "FAI_p90_retained",
+    "FAI_max_retained"
+  ],
+  "selected_functions": {
+    "science": [
+      "_spectral_line_height",
+      "additional_olci_indices",
+      "ci_family",
+      "decode_flag_metadata",
+      "flag_is_set",
+      "locate_l2_flags",
+      "ndci_index",
+      "nearest_product",
+      "product_wavelength",
+      "to_float"
+    ],
+    "compact": [
+      "_append_float",
+      "_membership_block",
+      "_open_compact_writer_v264",
+      "extract_lake_only_netcdf",
+      "validate_compact_product"
+    ],
+    "statistics": [
+      "_mask_values_from_ds",
+      "compact_stats"
+    ],
+    "hydrolakes": [
+      "erode_lake_geometries"
+    ],
+    "runtime": [
+      "command_version",
+      "find_ocssw_tool",
+      "read_bash_environment",
+      "require_ocssw"
+    ],
+    "l2gen": [
+      "_BASE_VALIDATE_L2_FILE_V5",
+      "_l2gen_rhos_product_name",
+      "l2_products",
+      "olci_acquisition_interval",
+      "product_basename",
+      "run_getanc",
+      "run_l2gen",
+      "validate_ancillary_par",
+      "validate_l2_file",
+      "write_par_file"
+    ],
+    "utils": [
+      "human_size",
+      "run_logged",
+      "sha256_file",
+      "utc_now",
+      "write_json"
+    ],
+    "staging": [
+      "_split_s3_path",
+      "download_cdse_scene",
+      "download_scene_s3_direct",
+      "release_temporary_s3_credentials",
+      "safe_extract_zip",
+      "stage_existing_input",
+      "stage_scene_efficient",
+      "temporary_s3_client",
+      "validate_sen3"
+    ],
+    "auth": [
+      "CDSEAuth"
+    ],
+    "catalogue": [
+      "_odata_scene",
+      "candidate_lakes_for_scene",
+      "normalize_bbox",
+      "scene_geometry",
+      "search_olci_l1_catalog"
+    ]
+  }
+}

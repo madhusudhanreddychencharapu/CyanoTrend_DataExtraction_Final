@@ -114,114 +114,34 @@ def _membership_block(latitude, longitude, lakes: gpd.GeoDataFrame) -> np.ndarra
     return ids
 
 
-def extract_lake_only_netcdf(
-    l2_path: Path,
-    scene: dict[str, Any],
-    lakes: gpd.GeoDataFrame,
-    output_path: Path,
-    window=None,
-    qa_flags: Iterable[str] = _m_settings.QA_EXCLUDE_FLAGS,
-    land_adjacency_pixels: int = _m_settings.LAND_ADJACENCY_PIXELS,
-    require_l2_nonland: bool = _m_settings.REQUIRE_L2_NONLAND,
-    detection_limit: float = _m_settings.CI_DETECTION_LIMIT,
-    ss681_max: float = 0.0,
-    ss665_min: float = 0.0,
-    bright_screen: bool = _m_settings.DEFAULT_BRIGHT_SCREEN,
-    bright_rhos865: float = _m_settings.DEFAULT_BRIGHT_RHOS865,
-    rows_per_block: int = None,
-    config_hash: str | None = None,
-    shore_buffer_m: float = None,
-) -> tuple[Path | None, dict[str, Any]]:
+def extract_lake_only_netcdf(l2_path: Path, scene: dict[str, Any], lakes: gpd.GeoDataFrame, output_path: Path, window=None, qa_flags: Iterable[str]=_m_settings.QA_EXCLUDE_FLAGS, land_adjacency_pixels: int=_m_settings.LAND_ADJACENCY_PIXELS, require_l2_nonland: bool=_m_settings.REQUIRE_L2_NONLAND, detection_limit: float=_m_settings.CI_DETECTION_LIMIT, ss681_max: float=0.0, ss665_min: float=0.0, bright_screen: bool=_m_settings.DEFAULT_BRIGHT_SCREEN, bright_rhos865: float=_m_settings.DEFAULT_BRIGHT_RHOS865, rows_per_block: int=_m_settings.ROW_BLOCK_SIZE, config_hash: str | None=None, shore_buffer_m: float=_m_settings.DEFAULT_SHORE_BUFFER_M) -> tuple[Path | None, dict[str, Any]]:
     """Persist HydroLAKES pixels with dual QA masks and bloom-aware CLDICE recovery."""
-    if window is not None:
-        raise ValueError("Only full-scene processing is supported")
-    if rows_per_block is None:
-        rows_per_block = _m_settings.ROW_BLOCK_SIZE
-    if shore_buffer_m is None:
-        shore_buffer_m = _m_settings.DEFAULT_SHORE_BUFFER_M
     output_path = Path(output_path)
-    analysis_lakes = (
-        _m_hydrolakes.erode_lake_geometries(lakes, float(shore_buffer_m))
-        if float(shore_buffer_m) > 0
-        else lakes
-    )
+    analysis_lakes = _m_hydrolakes.erode_lake_geometries(lakes, float(shore_buffer_m)) if float(shore_buffer_m) > 0 else lakes
     if analysis_lakes is None or analysis_lakes.empty:
-        return (
-            None,
-            {
-                "nobs": 0,
-                "missing_flags": [],
-                "reason": "no lake area after shoreline buffer",
-            },
-        )
+        return (None, {'nobs': 0, 'missing_flags': [], 'reason': 'no lake area after shoreline buffer'})
     with netCDF4.Dataset(l2_path) as src:
-        geo = src.groups["geophysical_data"]
-        nav = src.groups["navigation_data"]
+        geo = src.groups['geophysical_data']
+        nav = src.groups['navigation_data']
         flags_var = _m_science.locate_l2_flags(src)
         flag_map = _m_science.decode_flag_metadata(flags_var)
-        if "LAND" not in flag_map:
-            raise RuntimeError("L2 l2_flags lacks LAND")
-        rhos_names = {
-            w: _m_science.nearest_product(geo.variables, "rhos", w, tolerance_nm=30)
-            for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS
-        }
-        actual_waves = {
-            w: _m_science.product_wavelength(rhos_names[w])
-            for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS
-        }
-        ndci_prefix = "rhos" if _m_settings.NDCI_SOURCE.lower() == "rhos" else "Rrs"
-        ndci_names = {
-            665: _m_science.nearest_product(geo.variables, ndci_prefix, 665),
-            709: _m_science.nearest_product(geo.variables, ndci_prefix, 709),
-        }
-        shape_2d = nav.variables["latitude"].shape
-        metadata = {
-            "Conventions": "CF-1.8 ACDD-1.3",
-            "title": "Sentinel-3 OLCI derived lake-pixel point collection",
-            "schema": _m_settings.V264_SCHEMA,
-            "processing_config_hash": str(config_hash or ""),
-            "scene_id": str(scene.get("id", "")),
-            "scene_name": str(scene.get("name", "")),
-            "acquisition_start": str(scene.get("start", "")),
-            "acquisition_end": str(scene.get("end", "")),
-            "window_id": "FULL",
-            "window_bbox": "FULL",
-            "source_l2": str(Path(l2_path).name),
-            "l2gen_version": _m_runtime.command_version(_m_settings.L2GEN_BIN),
-            "primary_qa_profile": _m_settings.DEFAULT_MASK_PROFILE,
-            "primary_hard_exclude_flags": ",".join(_m_settings.BLOOM_AWARE_HARD_FLAGS),
-            "cyan_strict_exclude_flags": "LAND,CLDICE,HISATZEN,NAVFAIL_safety",
-            "conditional_cldice_bloom_recovery": 1,
-            "bloom_rescue_definition": "CLDICE AND NOT HISATZEN AND NOT NAVFAIL AND standard CIcyano spectral detection AND OLCI AFAI>0 AND rhos754>rhos490",
-            "bloom_rescue_method_note": "Conservative research implementation informed by the false-cloud recovery concept of Wang & Jiang 2025 (DOI 10.1016/j.jag.2025.104408); not an exact reproduction of NOAA MSL12 nAFAI/reflectance-ratio thresholds.",
-            "l2_flag_map_json": json.dumps(
-                {k: int(v) for k, v in flag_map.items()}, sort_keys=True
-            ),
-            "require_l2_nonland": 1,
-            "shore_buffer_m": float(shore_buffer_m),
-            "ci_detection_limit": float(detection_limit),
-            "ss681_max": float(ss681_max),
-            "ss665_min": float(ss665_min),
-            "non_lake_storage": "omitted entirely; not dense NaN cells",
-            "masked_value_semantics": "_FillValue decodes as NaN",
-            "true_color_bands": "rhos665,rhos560,rhos490",
-            "additional_indices": "MPH, OLCI-adapted FAI/AFAI",
-            "l2gen_nominal_band_mapping": "nominal 885 nm -> L2Gen rhos_884",
-        }
+        if 'LAND' not in flag_map:
+            raise RuntimeError('L2 l2_flags lacks LAND')
+        rhos_names = {w: _m_science.nearest_product(geo.variables, 'rhos', w, tolerance_nm=30) for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS}
+        actual_waves = {w: _m_science.product_wavelength(rhos_names[w]) for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS}
+        ndci_prefix = 'rhos' if _m_settings.NDCI_SOURCE.lower() == 'rhos' else 'Rrs'
+        ndci_names = {665: _m_science.nearest_product(geo.variables, ndci_prefix, 665), 709: _m_science.nearest_product(geo.variables, ndci_prefix, 709)}
+        shape_2d = nav.variables['latitude'].shape
+        metadata = {'Conventions': 'CF-1.8 ACDD-1.3', 'title': 'Sentinel-3 OLCI derived lake-pixel point collection', 'schema': _m_settings.V264_SCHEMA, 'processing_config_hash': str(config_hash or ''), 'scene_id': str(scene.get('id', '')), 'scene_name': str(scene.get('name', '')), 'acquisition_start': str(scene.get('start', '')), 'acquisition_end': str(scene.get('end', '')), 'window_id': window_id(window), 'window_bbox': 'FULL' if window is None else ','.join(map(str, window)), 'source_l2': str(Path(l2_path).name), 'l2gen_version': _m_runtime.command_version(_m_settings.L2GEN_BIN), 'primary_qa_profile': _m_settings.DEFAULT_MASK_PROFILE, 'primary_hard_exclude_flags': ','.join(_m_settings.BLOOM_AWARE_HARD_FLAGS), 'cyan_strict_exclude_flags': 'LAND,CLDICE,HISATZEN,NAVFAIL_safety', 'conditional_cldice_bloom_recovery': 1, 'bloom_rescue_definition': 'CLDICE AND NOT HISATZEN AND NOT NAVFAIL AND standard CIcyano spectral detection AND OLCI AFAI>0 AND rhos754>rhos490', 'bloom_rescue_method_note': 'Conservative research implementation informed by the false-cloud recovery concept of Wang & Jiang 2025 (DOI 10.1016/j.jag.2025.104408); not an exact reproduction of NOAA MSL12 nAFAI/reflectance-ratio thresholds.', 'l2_flag_map_json': json.dumps({k: int(v) for k, v in flag_map.items()}, sort_keys=True), 'require_l2_nonland': 1, 'shore_buffer_m': float(shore_buffer_m), 'ci_detection_limit': float(detection_limit), 'ss681_max': float(ss681_max), 'ss665_min': float(ss665_min), 'non_lake_storage': 'omitted entirely; not dense NaN cells', 'masked_value_semantics': '_FillValue decodes as NaN', 'true_color_bands': 'rhos665,rhos560,rhos490', 'additional_indices': 'MPH, OLCI-adapted FAI/AFAI', 'l2gen_nominal_band_mapping': 'nominal 885 nm -> L2Gen rhos_884'}
         ds, out, tmp = _open_compact_writer_v264(output_path, metadata)
         nobs = 0
-        missing_flags = [
-            x for x in set(_m_settings.CYAN_STRICT_QA_FLAGS) if x not in flag_map
-        ]
+        missing_flags = [x for x in set(_m_settings.CYAN_STRICT_QA_FLAGS) if x not in flag_map]
         try:
-            for start in tqdm(
-                range(0, shape_2d[0], int(rows_per_block)),
-                desc="Lake pixels FULL",
-            ):
+            for start in tqdm(range(0, shape_2d[0], int(rows_per_block)), desc=f'Lake pixels {window_id(window)}'):
                 stop = min(shape_2d[0], start + int(rows_per_block))
                 rs = slice(start, stop)
-                lat = _m_science.to_float(nav.variables["latitude"][rs, :])
-                lon = _m_science.to_float(nav.variables["longitude"][rs, :])
+                lat = _m_science.to_float(nav.variables['latitude'][rs, :])
+                lon = _m_science.to_float(nav.variables['longitude'][rs, :])
                 lake_ids = _membership_block(lat, lon, analysis_lakes)
                 inside = lake_ids > 0
                 if not inside.any():
@@ -230,159 +150,78 @@ def extract_lake_only_netcdf(
                 flags_valid = ~np.ma.getmaskarray(flags_ma)
                 flags = flags_ma.filled(0).astype(np.uint32)
                 geolocated = np.isfinite(lat) & np.isfinite(lon) & flags_valid
-                land = _m_science.flag_is_set(flags, flag_map, "LAND")
-                cldice = _m_science.flag_is_set(flags, flag_map, "CLDICE")
-                hisatzen = _m_science.flag_is_set(flags, flag_map, "HISATZEN")
-                navfail = _m_science.flag_is_set(flags, flag_map, "NAVFAIL")
+                land = _m_science.flag_is_set(flags, flag_map, 'LAND')
+                cldice = _m_science.flag_is_set(flags, flag_map, 'CLDICE')
+                hisatzen = _m_science.flag_is_set(flags, flag_map, 'HISATZEN')
+                navfail = _m_science.flag_is_set(flags, flag_map, 'NAVFAIL')
                 base = inside & geolocated & ~land
-                arrays = {
-                    w: _m_science.to_float(geo.variables[rhos_names[w]][rs, :])
-                    for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS
-                }
-                family = _m_science.ci_family(
-                    arrays[620],
-                    arrays[665],
-                    arrays[681],
-                    arrays[709],
-                    wavelengths=tuple(
-                        (actual_waves[w] for w in _m_settings.CORE_RHOS_WAVELENGTHS)
-                    ),
-                    detection_limit=detection_limit,
-                    ss681_max=ss681_max,
-                    ss665_min=ss665_min,
-                )
+                arrays = {w: _m_science.to_float(geo.variables[rhos_names[w]][rs, :]) for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS}
+                family = _m_science.ci_family(arrays[620], arrays[665], arrays[681], arrays[709], wavelengths=tuple((actual_waves[w] for w in _m_settings.CORE_RHOS_WAVELENGTHS)), detection_limit=detection_limit, ss681_max=ss681_max, ss665_min=ss665_min)
                 extra = _m_science.additional_olci_indices(arrays, actual_waves)
-                bloom_evidence = family["finite"] & family["ci_detection"]
-                bloom_evidence &= (
-                    extra["FAI_valid"]
-                    & np.isfinite(extra["FAI"])
-                    & (extra["FAI"] > float(_m_settings.BLOOM_RESCUE_AFAI_MIN))
-                )
-                bloom_evidence &= (
-                    np.isfinite(arrays[490])
-                    & np.isfinite(arrays[754])
-                    & (arrays[754] > arrays[490])
-                )
+                bloom_evidence = family['finite'] & family['ci_detection']
+                bloom_evidence &= extra['FAI_valid'] & np.isfinite(extra['FAI']) & (extra['FAI'] > float(_m_settings.BLOOM_RESCUE_AFAI_MIN))
+                bloom_evidence &= np.isfinite(arrays[490]) & np.isfinite(arrays[754]) & (arrays[754] > arrays[490])
                 bloom_rescue = base & cldice & ~hisatzen & ~navfail & bloom_evidence
                 cyan_strict_valid = base & ~cldice & ~hisatzen & ~navfail
                 valid_water = base & ~hisatzen & ~navfail & ~cldice | bloom_rescue
                 cloud_excluded = base & cldice & ~bloom_rescue
                 if int(land_adjacency_pixels) > 0:
-                    adjacent = (
-                        binary_dilation(land, iterations=int(land_adjacency_pixels))
-                        & ~land
-                    )
+                    adjacent = binary_dilation(land, iterations=int(land_adjacency_pixels)) & ~land
                     valid_water &= ~adjacent
                     cyan_strict_valid &= ~adjacent
                 if bright_screen:
-                    bright = np.isfinite(arrays[865]) & (
-                        arrays[865] > float(bright_rhos865)
-                    )
+                    bright = np.isfinite(arrays[865]) & (arrays[865] > float(bright_rhos865))
                     valid_water &= ~bright
                     cyan_strict_valid &= ~bright
                     bloom_rescue &= ~bright
-                ci_valid = valid_water & family["finite"]
-                candidate = ci_valid & family["ci_candidate"]
-                detected = ci_valid & family["ci_detection"]
+                ci_valid = valid_water & family['finite']
+                candidate = ci_valid & family['ci_candidate']
+                detected = ci_valid & family['ci_detection']
                 red = _m_science.to_float(geo.variables[ndci_names[665]][rs, :])
                 edge = _m_science.to_float(geo.variables[ndci_names[709]][rs, :])
                 ndci, ndci_finite = _m_science.ndci_index(red, edge)
                 ndci_valid = valid_water & ndci_finite
-                extra_valid = {
-                    k: valid_water & extra[f"{k}_valid"]
-                    for k in _m_settings.ADDITIONAL_INDEX_NAMES
-                }
+                extra_valid = {k: valid_water & extra[f'{k}_valid'] for k in _m_settings.ADDITIONAL_INDEX_NAMES}
                 take = inside & geolocated
                 rr, cc = np.where(take)
                 if not rr.size:
                     continue
                 count = len(rr)
                 sl = slice(nobs, nobs + count)
-                out["Hylak_id"][sl] = lake_ids[rr, cc]
-                out["source_row"][sl] = rr.astype(np.int32) + int(start)
-                out["source_col"][sl] = cc.astype(np.int32)
-                out["l2_flags"][sl] = flags[rr, cc]
-                mask_map = {
-                    "valid_water_mask": valid_water,
-                    "cyan_strict_valid_mask": cyan_strict_valid,
-                    "bloom_rescue_mask": bloom_rescue,
-                    "cldice_mask": cldice,
-                    "hisatzen_mask": hisatzen,
-                    "navfail_mask": navfail,
-                    "cloud_excluded_mask": cloud_excluded,
-                    "ci_valid_mask": ci_valid,
-                    "ci_candidate_mask": candidate,
-                    "ci_detection_mask": detected,
-                    "ndci_valid_mask": ndci_valid,
-                    "mph_valid_mask": extra_valid["MPH"],
-                    "fai_valid_mask": extra_valid["FAI"],
-                }
+                out['Hylak_id'][sl] = lake_ids[rr, cc]
+                out['source_row'][sl] = rr.astype(np.int32) + int(start)
+                out['source_col'][sl] = cc.astype(np.int32)
+                out['l2_flags'][sl] = flags[rr, cc]
+                mask_map = {'valid_water_mask': valid_water, 'cyan_strict_valid_mask': cyan_strict_valid, 'bloom_rescue_mask': bloom_rescue, 'cldice_mask': cldice, 'hisatzen_mask': hisatzen, 'navfail_mask': navfail, 'cloud_excluded_mask': cloud_excluded, 'ci_valid_mask': ci_valid, 'ci_candidate_mask': candidate, 'ci_detection_mask': detected, 'ndci_valid_mask': ndci_valid, 'mph_valid_mask': extra_valid['MPH'], 'fai_valid_mask': extra_valid['FAI']}
                 for name, mask in mask_map.items():
                     out[name][sl] = mask[rr, cc].astype(np.uint8)
-                _append_float(out["latitude"], nobs, lat[rr, cc])
-                _append_float(out["longitude"], nobs, lon[rr, cc])
+                _append_float(out['latitude'], nobs, lat[rr, cc])
+                _append_float(out['longitude'], nobs, lon[rr, cc])
                 for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS:
-                    _append_float(out[f"rhos_{w}"], nobs, arrays[w][rr, cc])
-                _append_float(
-                    out["SS_681"],
-                    nobs,
-                    np.where(ci_valid, family["SS_681"], np.nan)[rr, cc],
-                )
-                _append_float(
-                    out["SS_665"],
-                    nobs,
-                    np.where(ci_valid, family["SS_665"], np.nan)[rr, cc],
-                )
-                _append_float(
-                    out["CI"], nobs, np.where(candidate, family["CI"], np.nan)[rr, cc]
-                )
-                _append_float(
-                    out["CI_cyano"],
-                    nobs,
-                    np.where(detected, family["CI_cyano"], np.nan)[rr, cc],
-                )
-                _append_float(
-                    out["NDCI"], nobs, np.where(ndci_valid, ndci, np.nan)[rr, cc]
-                )
-                _append_float(
-                    out["MPH"],
-                    nobs,
-                    np.where(extra_valid["MPH"], extra["MPH"], np.nan)[rr, cc],
-                )
-                _append_float(
-                    out["MPH_peak_nm"],
-                    nobs,
-                    np.where(extra_valid["MPH"], extra["MPH_peak_nm"], np.nan)[rr, cc],
-                )
-                _append_float(
-                    out["FAI"],
-                    nobs,
-                    np.where(extra_valid["FAI"], extra["FAI"], np.nan)[rr, cc],
-                )
+                    _append_float(out[f'rhos_{w}'], nobs, arrays[w][rr, cc])
+                _append_float(out['SS_681'], nobs, np.where(ci_valid, family['SS_681'], np.nan)[rr, cc])
+                _append_float(out['SS_665'], nobs, np.where(ci_valid, family['SS_665'], np.nan)[rr, cc])
+                _append_float(out['CI'], nobs, np.where(candidate, family['CI'], np.nan)[rr, cc])
+                _append_float(out['CI_cyano'], nobs, np.where(detected, family['CI_cyano'], np.nan)[rr, cc])
+                _append_float(out['NDCI'], nobs, np.where(ndci_valid, ndci, np.nan)[rr, cc])
+                _append_float(out['MPH'], nobs, np.where(extra_valid['MPH'], extra['MPH'], np.nan)[rr, cc])
+                _append_float(out['MPH_peak_nm'], nobs, np.where(extra_valid['MPH'], extra['MPH_peak_nm'], np.nan)[rr, cc])
+                _append_float(out['FAI'], nobs, np.where(extra_valid['FAI'], extra['FAI'], np.nan)[rr, cc])
                 nobs += count
         finally:
             ds.close()
         if nobs == 0:
             tmp.unlink(missing_ok=True)
-            return (None, {"nobs": 0, "missing_flags": missing_flags})
+            return (None, {'nobs': 0, 'missing_flags': missing_flags})
         if tmp.parent == output_path.parent:
             tmp.replace(output_path)
         else:
-            transfer = output_path.with_suffix(output_path.suffix + ".copying")
+            transfer = output_path.with_suffix(output_path.suffix + '.copying')
             transfer.unlink(missing_ok=True)
             shutil.copy2(tmp, transfer)
             transfer.replace(output_path)
             tmp.unlink(missing_ok=True)
-    return (
-        output_path,
-        {
-            "nobs": int(nobs),
-            "size_bytes": int(output_path.stat().st_size),
-            "size_human": _m_utils.human_size(output_path.stat().st_size),
-            "missing_flags": missing_flags,
-            "window_id": "FULL",
-        },
-    )
+    return (output_path, {'nobs': int(nobs), 'size_bytes': int(output_path.stat().st_size), 'size_human': _m_utils.human_size(output_path.stat().st_size), 'missing_flags': missing_flags, 'window_id': window_id(window)})
 
 
 def _open_compact_writer_v264(path: Path, metadata: dict[str, Any]):
@@ -514,3 +353,5 @@ def _open_compact_writer_v264(path: Path, metadata: dict[str, Any]):
         }
     )
     return (ds, out, tmp)
+
+from .windows import window_id

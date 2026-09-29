@@ -39,7 +39,12 @@ def reconcile(workspace, ledger, publisher, active_ids=()):
     """Finish ready ZIPs or retry abandoned attempts after their OS lock releases."""
     for record in ledger.rows():
         sid = record["id"]
-        if sid in active_ids or record["status"] not in ("running", "publishing"):
+        if sid in active_ids:
+            continue
+        if record["stage"] in {"complete_no_native", "skipped_no_lakes"}:
+            cleanup(workspace, sid)
+            continue
+        if record["status"] not in ("running", "publishing"):
             continue
         try:
             with file_lock(
@@ -70,7 +75,7 @@ def reconcile(workspace, ledger, publisher, active_ids=()):
                     cleanup(workspace, sid)
                 else:
                     ledger.fail(sid, failure_detail(workspace, sid))
-                    cleanup(workspace, sid)
+                    # Notebook KEEP_FAILED_SCRATCH=True: retain failure evidence for retries/inspection.
         except RuntimeError as e:
             if str(e).startswith("Another process holds"):
                 continue

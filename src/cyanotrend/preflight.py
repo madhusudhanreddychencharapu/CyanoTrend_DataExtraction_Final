@@ -66,7 +66,7 @@ def check(workspace):
     try:
         m = references.manifest(workspace)
         if m["coverage"] != "global":
-            errors.append("Full-scene processing requires globally prepared references")
+            errors.append("Notebook processing requires globally prepared reference sources")
         verification = references.verify(workspace)
         if not verification["ok"]:
             errors.append(

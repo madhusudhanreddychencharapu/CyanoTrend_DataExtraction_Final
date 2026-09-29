@@ -24,8 +24,8 @@ with file_lock(ws.output / ".scene-locks" / f"{a.scene_id}.lock"):
     b = io.StringIO()
     w = csv.DictWriter(b, fieldnames=COLUMNS)
     w.writeheader()
-    w.writerow({"scene_id": a.scene_id, "Hylak_id": 1, "window_id": "FULL"})
-    content = {"lakepixels.nc": b"fixture", "statistics.csv": b.getvalue().encode()}
+    w.writerow({"scene_id": a.scene_id, "Hylak_id": 1})
+    content = {f"S3_OLCI_{a.scene_id}_ALL_SCIENCE_300m_CF.nc": b"fixture", f"S3_OLCI_{a.scene_id}_ALL_INDEX_STATS.csv": b.getvalue().encode()}
     meta = {
         "scene": scene,
         "reference_id": "ref",
@@ -37,5 +37,5 @@ with file_lock(ws.output / ".scene-locks" / f"{a.scene_id}.lock"):
     with zipfile.ZipFile(path, "w") as z:
         for k, v in content.items():
             z.writestr(k, v)
-        z.writestr("metadata.json", json.dumps(meta))
+        z.writestr(f"S3_OLCI_{a.scene_id}_METADATA.json", json.dumps(meta))
     mark.unlink()

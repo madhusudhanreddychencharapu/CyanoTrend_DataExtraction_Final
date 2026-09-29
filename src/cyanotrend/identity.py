@@ -11,6 +11,7 @@ def science_fingerprint():
         root / "execution.py",
         root / "references.py",
         root / "schema.py",
+        root / "planning.py",
     ]
     h = hashlib.sha256()
     for p in files:

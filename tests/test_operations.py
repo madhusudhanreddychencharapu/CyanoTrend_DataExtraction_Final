@@ -62,11 +62,11 @@ class Operations(unittest.TestCase):
         writer.writeheader()
         for i in range(rows):
             writer.writerow(
-                {"scene_id": s["id"], "window_id": "FULL", "Hylak_id": i + 1}
+                {"scene_id": s["id"], "Hylak_id": i + 1}
             )
         contents = {
-            "lakepixels.nc": b"synthetic fixture, not scientific NetCDF",
-            "statistics.csv": buf.getvalue().encode(),
+            f"S3_OLCI_{s['id']}_ALL_SCIENCE_300m_CF.nc": b"synthetic fixture, not scientific NetCDF",
+            f"S3_OLCI_{s['id']}_ALL_INDEX_STATS.csv": buf.getvalue().encode(),
         }
         meta = {
             "scene": s,
@@ -77,7 +77,7 @@ class Operations(unittest.TestCase):
         with zipfile.ZipFile(p, "w") as z:
             for k, v in contents.items():
                 z.writestr(k, v)
-            z.writestr("metadata.json", json.dumps(meta))
+            z.writestr(f"S3_OLCI_{s['id']}_METADATA.json", json.dumps(meta))
         return p
 
     def test_claim_deduplicates_plans_and_concurrent_workers(self):
@@ -179,6 +179,30 @@ class Operations(unittest.TestCase):
                 },
                 Path("bad"),
             )
+
+    def test_different_lake_universes_cannot_share_master(self):
+        scene = self.scene()
+        self.enqueue([scene])
+        with self.assertRaisesRegex(ValueError, "HydroLAKES universe differs"):
+            self.ledger.enqueue({"id":"usa", "created":"now", "reference_id":"ref", "selection":{"lake_region":"USA"}, "scenes":[scene]}, Path("usa.json"))
+
+    def test_old_master_schema_is_not_relabelled(self):
+        self.publisher.master.write_text("scene_id,Hylak_id,native_polygon_pixels\n")
+        before = self.publisher.master.read_bytes()
+        with self.assertRaisesRegex(ValueError, "Master CSV schema mismatch"):
+            self.publisher.initialize()
+        self.assertEqual(self.publisher.master.read_bytes(), before)
+
+    def test_failed_scratch_is_retained_like_notebook(self):
+        scene = self.scene()
+        self.enqueue([scene])
+        self.ledger.claim()
+        directory = self.ws.scratch / scene["id"]
+        directory.mkdir()
+        (directory / "failure.json").write_text('{"error":"synthetic failure"}')
+        reconcile(self.ws, self.ledger, self.publisher)
+        self.assertEqual(self.ledger.scene(scene["id"])["status"], "retry")
+        self.assertTrue((directory / "failure.json").exists())
 
     def test_corrupt_zip_not_published(self):
         s = self.scene()

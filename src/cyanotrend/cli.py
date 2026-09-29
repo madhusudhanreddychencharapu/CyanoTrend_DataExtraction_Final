@@ -17,10 +17,17 @@ def positive(value):
     return n
 
 
+def catalogue_cap(value):
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError("Must be zero (all) or positive")
+    return n
+
+
 def parser():
     p = argparse.ArgumentParser(
         prog="cyanotrend",
-        description="Full-scene Sentinel-3 lake processing; five parallel scenes by default.",
+        description="Notebook adaptive-window Sentinel-3 lake processing; five parallel scenes by default.",
     )
     p.add_argument(
         "--output",
@@ -35,7 +42,7 @@ def parser():
     p.add_argument(
         "--scratch",
         default=".scratch",
-        help="Temporary scene downloads and L2 files; removed after each attempt",
+        help="Temporary scene data; successful scratch removed, failed scratch retained as in notebook",
     )
     p.add_argument(
         "--ocssw",
@@ -65,10 +72,11 @@ def parser():
     q.add_argument("--end", required=True, help="Last date, YYYY-MM-DD (inclusive)")
     q.add_argument("--country", help="Optional ISO3 country filter")
     q.add_argument("--state-id", help="Optional exact shapeID from regions")
+    q.add_argument("--lake-region", choices=["WORLD", "USA"], default="WORLD", help="Loaded HydroLAKES universe, independent of planning state (notebook default: WORLD)")
     q.add_argument(
         "--max-scenes",
-        type=positive,
-        help="Optional cap on eligible scenes; omitted means all",
+        type=catalogue_cap,
+        help="Notebook catalogue cap before lake filtering; zero or omitted means all",
     )
     q = sub.add_parser(
         "run", help="Run queue; wait for future saved plans until stopped"
@@ -85,7 +93,7 @@ def parser():
     q = sub.add_parser("scenes", help="List scene progress and staging transfer rates")
     q.add_argument(
         "--status",
-        choices=["queued", "running", "retry", "publishing", "done", "failed"],
+        choices=["queued", "running", "retry", "publishing", "done", "failed", "skipped_no_lakes"],
     )
     q = sub.add_parser(
         "scene", help="Inspect one scene, attempts, errors, timings and archive"
@@ -177,6 +185,12 @@ def verify(workspace, scene_id=None):
     for row in ledger.rows("done"):
         if scene_id and row["id"] != scene_id:
             continue
+        if row["stage"] == "complete_no_native":
+            if counts.get(row["id"], 0):
+                errors.append(f"Empty completed scene has master rows: {row['id']}")
+            else:
+                checked += 1
+            continue
         from pathlib import Path
 
         p = Path(row["archive"])
@@ -223,7 +237,7 @@ def dispatch(a):
     if a.command == "plan":
         from .planning import create_plan
 
-        return create_plan(ws, a.start, a.end, a.country, a.state_id, a.max_scenes)
+        return create_plan(ws, a.start, a.end, a.country, a.state_id, a.max_scenes, a.lake_region)
     if a.command == "run":
         from .service import serve
 

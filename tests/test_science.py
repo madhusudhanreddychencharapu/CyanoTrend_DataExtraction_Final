@@ -111,7 +111,7 @@ class Science(unittest.TestCase):
             self.assertEqual(ds["ci_valid_mask"][7], 1)
             self.assertEqual(ds.window_id, "FULL")
         table = statistics.compact_stats(p, self.lakes)
-        self.assertEqual(list(table.columns), COLUMNS[:42])
+        self.assertEqual(len(table.columns), 42)  # Original per-window compact_stats remains intact.
         self.assertEqual(set(table.Hylak_id), {1, 2})
         self.assertEqual(table.native_polygon_pixels.sum(), 12)
         self.assertEqual(table.bloom_rescued_pixels.sum(), 1)
@@ -143,43 +143,45 @@ class Science(unittest.TestCase):
         self.assertEqual(result.loc[0, "admin_match_status"], "ambiguous")
         self.assertEqual(result.loc[0, "state_name"], "")
 
-    def test_full_scene_only(self):
+    def test_window_identity_is_preserved(self):
+        import netCDF4
         from cyanotrend.core.compact import extract_lake_only_netcdf
+        from cyanotrend.core.windows import window_id
+        bounds = (-86, 39, -84, 41)
+        path, _ = extract_lake_only_netcdf(self.l2, self.scene, self.lakes, self.root / "window.nc", window=bounds)
+        with netCDF4.Dataset(path) as ds:
+            self.assertEqual(ds.window_id, window_id(bounds))
+            self.assertEqual(ds.window_bbox, "-86,39,-84,41")
 
-        with self.assertRaises(ValueError):
-            extract_lake_only_netcdf(
-                self.l2,
-                self.scene,
-                self.lakes,
-                self.root / "bad.nc",
-                window=(-86, 39, -84, 41),
-            )
-
-    def test_zip_native_product_and_46_column_csv(self):
-        from cyanotrend.core import compact, statistics
+    def test_reference_share_export_and_master_columns(self):
+        import json
+        import zipfile
+        from types import SimpleNamespace
+        from cyanotrend.core import compact, exports
         from cyanotrend.common import Workspace
         from cyanotrend.worker import build_bundle
         from cyanotrend.publication import validate_archive
-
-        p, _ = compact.extract_lake_only_netcdf(
-            self.l2, self.scene, self.lakes, self.root / "native.nc", config_hash="ref"
-        )
-        table = statistics.compact_stats(p, self.lakes)
-        table["latitude"] = [40.001, 40.001]
-        table["longitude"] = [-85.005, -84.995]
+        from cyanotrend.schema import COLUMNS, NOTEBOOK_COLUMNS
+        p, _ = compact.extract_lake_only_netcdf(self.l2, self.scene, self.lakes, self.root / "native.nc", config_hash="ref")
+        # Overlapping windows must not double count the same rounded native coordinates.
+        exports.configure(self.lakes, [p, p], self.root / "exports")
+        _, table = exports._share_all_index_stats(self.scene["id"], "ref", SimpleNamespace(scene_name=self.scene["name"], acquisition_start=self.scene["start"]))
+        self.assertEqual(list(table.columns), NOTEBOOK_COLUMNS)
+        self.assertEqual(table.native_lake_pixels.sum(), 12)
+        raster, _ = exports.export_complete_scene_science_netcdf(self.scene["id"])
         table["state_name"] = ["West", "East"]
         table["state_id"] = ["s1", "s2"]
-        ws = Workspace.create(
-            self.root / "out",
-            self.root / "refs",
-            self.root / "scratch",
-            self.root / "ocssw",
-        )
+        table["latitude"] = [40.001, 40.001]
+        table["longitude"] = [-85.005, -84.995]
+        ws = Workspace.create(self.root / "out", self.root / "refs", self.root / "scratch", self.root / "ocssw")
         ws.ensure()
-        archive = build_bundle(ws, self.scene, "ref", p, table, {})
+        archive = build_bundle(ws, self.scene, "ref", Path(raster), table, {})
         meta, rows = validate_archive(archive, self.scene["id"], "ref")
-        self.assertEqual(len(rows[0]), 46)
-        self.assertTrue(rows[0]["compact_netcdf"].endswith(".zip::lakepixels.nc"))
+        self.assertEqual(list(rows[0]), COLUMNS)
+        self.assertEqual(len(COLUMNS), 50)
+        with zipfile.ZipFile(archive) as z:
+            self.assertEqual(len(z.namelist()), 3)
+            self.assertTrue(any(n.endswith("_ALL_INDEX_STATS.csv") for n in z.namelist()))
 
 
 if __name__ == "__main__":

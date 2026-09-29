@@ -18,25 +18,27 @@ from .schema import COLUMNS
 
 def validate_archive(path, scene_id, reference_id):
     with zipfile.ZipFile(path) as z:
-        expected = {"metadata.json", "statistics.csv", "lakepixels.nc"}
+        prefix = f"S3_OLCI_{scene_id}"
+        metadata_member = f"{prefix}_METADATA.json"
+        csv_member = f"{prefix}_ALL_INDEX_STATS.csv"
+        raster_member = f"{prefix}_ALL_SCIENCE_300m_CF.nc"
+        expected = {metadata_member, csv_member, raster_member}
         if set(z.namelist()) != expected or len(z.namelist()) != 3:
-            raise ValueError(
-                "Scene ZIP must contain exactly metadata.json, statistics.csv, lakepixels.nc"
-            )
+            raise ValueError("Scene ZIP must contain the notebook metadata, CSV and science NetCDF")
         if z.testzip():
             raise ValueError("Scene ZIP failed CRC verification")
-        meta = json.loads(z.read("metadata.json"))
+        meta = json.loads(z.read(metadata_member))
         if meta["scene"]["id"] != scene_id or meta["reference_id"] != reference_id:
             raise ValueError("Scene ZIP identity does not match the queue")
         table = list(
-            csv.DictReader(io.StringIO(z.read("statistics.csv").decode("utf-8")))
+            csv.DictReader(io.StringIO(z.read(csv_member).decode("utf-8")))
         )
-        header = next(csv.reader(io.StringIO(z.read("statistics.csv").decode("utf-8"))))
+        header = next(csv.reader(io.StringIO(z.read(csv_member).decode("utf-8"))))
         if header != COLUMNS:
             raise ValueError("Scene CSV schema mismatch")
         keys = set()
         for row in table:
-            if row["scene_id"] != scene_id or row["window_id"] != "FULL":
+            if row["scene_id"] != scene_id:
                 raise ValueError("Unexpected scene/window identity in CSV")
             key = (row["scene_id"], row["Hylak_id"])
             if key in keys:
@@ -44,9 +46,9 @@ def validate_archive(path, scene_id, reference_id):
             keys.add(key)
         if len(table) != meta["statistics_rows"]:
             raise ValueError("CSV row count disagrees with metadata")
-        if z.getinfo("lakepixels.nc").file_size == 0:
+        if z.getinfo(raster_member).file_size == 0:
             raise ValueError("Empty NetCDF member")
-        for member in ("statistics.csv", "lakepixels.nc"):
+        for member in (csv_member, raster_member):
             import hashlib
 
             h = hashlib.sha256()

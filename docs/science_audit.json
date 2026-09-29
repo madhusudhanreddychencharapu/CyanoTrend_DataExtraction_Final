@@ -1,5 +1,251 @@
 [
   {
+    "module": "catalogue",
+    "function": "normalize_bbox",
+    "notebook_cell": 14,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "catalogue",
+    "function": "_odata_scene",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "catalogue",
+    "function": "search_olci_l1_catalog",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "catalogue",
+    "function": "scene_geometry",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "catalogue",
+    "function": "candidate_lakes_for_scene",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "compact",
+    "function": "_append_float",
+    "notebook_cell": 44,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "compact",
+    "function": "_membership_block",
+    "notebook_cell": 44,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "compact",
+    "function": "extract_lake_only_netcdf",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "compact",
+    "function": "_open_compact_writer_v264",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "configuration",
+    "function": "processing_config_hash",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_scene_compact_files",
+    "notebook_cell": 50,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "exports",
+    "function": "_load_target_lakes_if_needed",
+    "notebook_cell": 50,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "exports",
+    "function": "_lake_boundaries_for_ids",
+    "notebook_cell": 50,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_unit_sphere_xyz",
+    "notebook_cell": 50,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_load_scene_pixels",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_primary_selector",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_compact_qa_metadata",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_science_geographic_setup_v265",
+    "notebook_cell": 58,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_scene_analysis_lakes_v267",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_dedupe_target_assignments_v267",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_native_assignments_geographic_v267",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "export_complete_scene_science_netcdf",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "_share_all_index_stats",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "registry_table",
+    "notebook_cell": 36,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "exports",
+    "function": "_app_status",
+    "notebook_cell": 50,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "exports",
+    "function": "parse_s3_frame_metadata",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "exports",
+    "function": "create_scene_share_bundle",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "hydrolakes",
+    "function": "erode_lake_geometries",
+    "notebook_cell": 29,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "l2gen",
+    "function": "l2_products",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "l2gen",
+    "function": "write_par_file",
+    "notebook_cell": 17,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "l2gen",
+    "function": "product_basename",
+    "notebook_cell": 17,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "l2gen",
+    "function": "olci_acquisition_interval",
+    "notebook_cell": 17,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "l2gen",
+    "function": "validate_ancillary_par",
+    "notebook_cell": 17,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "l2gen",
+    "function": "run_getanc",
+    "notebook_cell": 17,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "l2gen",
+    "function": "validate_l2_file",
+    "notebook_cell": 29,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "l2gen",
+    "function": "run_l2gen",
+    "notebook_cell": 17,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "l2gen",
+    "function": "_l2gen_rhos_product_name",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "runtime",
+    "function": "read_bash_environment",
+    "notebook_cell": 11,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "runtime",
+    "function": "find_ocssw_tool",
+    "notebook_cell": 11,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "runtime",
+    "function": "command_version",
+    "notebook_cell": 11,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "runtime",
+    "function": "require_ocssw",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true
+  },
+  {
     "module": "science",
     "function": "to_float",
     "notebook_cell": 19,
@@ -60,6 +306,60 @@
     "normalized_ast_equal": true
   },
   {
+    "module": "staging",
+    "function": "safe_extract_zip",
+    "notebook_cell": 15,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "staging",
+    "function": "validate_sen3",
+    "notebook_cell": 15,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "staging",
+    "function": "download_cdse_scene",
+    "notebook_cell": 15,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "staging",
+    "function": "stage_existing_input",
+    "notebook_cell": 15,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "staging",
+    "function": "temporary_s3_client",
+    "notebook_cell": 40,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "staging",
+    "function": "release_temporary_s3_credentials",
+    "notebook_cell": 40,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "staging",
+    "function": "_split_s3_path",
+    "notebook_cell": 40,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "staging",
+    "function": "download_scene_s3_direct",
+    "notebook_cell": 40,
+    "normalized_ast_equal": false
+  },
+  {
+    "module": "staging",
+    "function": "stage_scene_efficient",
+    "notebook_cell": 40,
+    "normalized_ast_equal": false
+  },
+  {
     "module": "statistics",
     "function": "compact_stats",
     "notebook_cell": 57,
@@ -72,27 +372,57 @@
     "normalized_ast_equal": true
   },
   {
-    "module": "compact",
-    "function": "_append_float",
-    "notebook_cell": 44,
+    "module": "utils",
+    "function": "utc_now",
+    "notebook_cell": 12,
     "normalized_ast_equal": true
   },
   {
-    "module": "compact",
-    "function": "_membership_block",
-    "notebook_cell": 44,
+    "module": "utils",
+    "function": "human_size",
+    "notebook_cell": 12,
     "normalized_ast_equal": true
   },
   {
-    "module": "compact",
-    "function": "extract_lake_only_netcdf",
-    "notebook_cell": 57,
-    "normalized_ast_equal": false
+    "module": "utils",
+    "function": "sha256_file",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true
   },
   {
-    "module": "compact",
-    "function": "_open_compact_writer_v264",
-    "notebook_cell": 57,
+    "module": "utils",
+    "function": "write_json",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "utils",
+    "function": "run_logged",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "windows",
+    "function": "_expanded_lonlat_box",
+    "notebook_cell": 42,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "windows",
+    "function": "plan_scene_windows",
+    "notebook_cell": 42,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "windows",
+    "function": "window_id",
+    "notebook_cell": 42,
+    "normalized_ast_equal": true
+  },
+  {
+    "module": "windows",
+    "function": "lakes_for_window",
+    "notebook_cell": 42,
     "normalized_ast_equal": true
   }
 ]

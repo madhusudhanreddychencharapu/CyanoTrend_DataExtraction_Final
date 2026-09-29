@@ -26,16 +26,16 @@ reference/output workspace; automatic data refresh is intentionally absent.
 
 ## 2. Plans — `planning.py`
 
-An inclusive custom date range is searched in calendar-month shards. Country
+An inclusive custom date range is searched with the notebook catalogue cap. Country
 and state polygons select eligible planning lakes, and scene footprints must
-intersect those lakes. Only S3A and S3B OLCI EFR products are accepted. The saved
+intersect the selected administrative geometry AND those lakes. Only S3A and S3B OLCI EFR products are accepted. The saved
 plan retains discovery evidence and selection parameters so the queue can resume.
 
-A processing worker receives all eligible global lakes intersecting the scene,
+A processing worker receives all eligible lakes in the loaded WORLD/USA universe intersecting the scene,
 not just lakes inside the requesting administrative region. This is the notebook's
 scene-level deduplication behavior. Region associations are many-to-many: a scene
 may appear in several region progress counts, but in only one global scene count.
-`--max-scenes` limits eligible scene IDs after lake filtering; it is not concurrency.
+`--max-scenes` matches notebook max_products: raw catalogue products before regional filtering; it is not concurrency.
 
 ## 3. Operational state — `ledger.py`
 
@@ -70,10 +70,12 @@ OCSSW's sourced environment is passed to its subprocesses, not globally applied 
 Python's GIS stack. Full native-pixel QA/statistics follow the notebook's final
 functions; the CLI exposes no science-tuning switches.
 
-A successful scene without geolocated native lake observations has an explicit
-empty native NetCDF and header-only CSV, documented in metadata. Cloud-rejected
-observations still retain the notebook's QA/count behavior. State assignment does
-not alter pixel masks or index calculations.
+A scene without native observations completes without a fabricated share ZIP.
+The final share exporter needs native observations, as in the notebook. Cloud-masked
+native observations still yield lake rows and diagnostic pixel counts.
+The worker applies the notebook adaptive window planner and runs L2Gen sequentially
+for each window after a single scene download. Export deduplicates overlapping
+window observations using six-decimal coordinates and the lake ID.
 
 ## 6. Publication — `publication.py`
 
@@ -89,15 +91,11 @@ filesystem changes with SQLite's completion commit. Recovery checks hashes and
 does not rotate the backup twice or append rows twice. Scientific work is not
 repeated merely because master publication was interrupted.
 
-The existing `compact_netcdf` column contains a portable locator such as
-`world/2024/08/UUID.zip::lakepixels.nc`. The text after `::` names the ZIP member;
-it is not a promise that NetCDF readers accept the locator as a filesystem path.
-Extract that member when opening it with a library that needs a normal file.
-
-The master rewrite costs O(total master size) for each publication. That cost
-follows the requested CSV/previous-version contract; it should be measured at
-archive scale. NetCDF compression happens inside the NetCDF, so the ZIP stores
-that member without redundant compression. CSV and JSON ZIP members are compressed.
+Final CSVs share the notebook ALL_INDEX_STATS schema plus the four requested
+metadata fields. Native window NC files are listed with checksums in scene metadata
+and retained beside the ZIP. The share ZIP contains the notebook mapped NetCDF,
+CSV and metadata filenames. All ZIP members use the reference ZIP_DEFLATED policy.
+The master rewrite still costs O(total master size) per publication.
 
 ## 7. Observability / future frontend — `cli.py`, `telemetry.py`
 

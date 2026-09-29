@@ -1,0 +1,401 @@
+[
+  {
+    "module": "catalogue",
+    "function": "normalize_bbox",
+    "notebook_cell": 14,
+    "normalized_ast_equal": true,
+    "sha256": "337efa01e69d9c41cf1cd44e450120b32be1bbdf27c5e5279475295bc4e7fbcb"
+  },
+  {
+    "module": "catalogue",
+    "function": "_odata_scene",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true,
+    "sha256": "9c1cb35243edbe40608f372dfc56d01bdc7ea9c283afff8de44cada9ee322313"
+  },
+  {
+    "module": "catalogue",
+    "function": "search_olci_l1_catalog",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true,
+    "sha256": "e0103bbe91c8f407f865181e2c699107ec4fb5f08fd0dfccc55cea09acb2d0b2"
+  },
+  {
+    "module": "catalogue",
+    "function": "scene_geometry",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true,
+    "sha256": "e4413a3ca88eb18148969a7be56d4c9728bcc9df158c877c5de58d831dab4540"
+  },
+  {
+    "module": "catalogue",
+    "function": "candidate_lakes_for_scene",
+    "notebook_cell": 38,
+    "normalized_ast_equal": true,
+    "sha256": "f9b025eca8f34868846ee0a2e055e8cc725bcd27680b3189e4fba6c6522e8ac2"
+  },
+  {
+    "module": "compact",
+    "function": "_append_float",
+    "notebook_cell": 44,
+    "normalized_ast_equal": true,
+    "sha256": "70605bc393a1d62b86cadc820aec264599419aec5d32d201f0a97bb2b8e948f1"
+  },
+  {
+    "module": "compact",
+    "function": "_membership_block",
+    "notebook_cell": 44,
+    "normalized_ast_equal": true,
+    "sha256": "85609366f69e6ae2ace06c848eedb197620f71401e76825f490fe911acb588aa"
+  },
+  {
+    "module": "compact",
+    "function": "extract_lake_only_netcdf",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "0268d263aea5582de010cb10077f22b119a7aad0ce5db26fcdeca9acb1e20a03"
+  },
+  {
+    "module": "compact",
+    "function": "_open_compact_writer_v264",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "fbd211da108bca603eba2c787de18c90c63a186db3d6434ab13e673bc9909a9b"
+  },
+  {
+    "module": "configuration",
+    "function": "processing_config_hash",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "86f64c874127071e52075f43d12504f7438335c644c4a507719d7ed830b68bf9"
+  },
+  {
+    "module": "exports",
+    "function": "_lake_boundaries_for_ids",
+    "notebook_cell": 50,
+    "normalized_ast_equal": true,
+    "sha256": "1ec0b4d12971a8235520c03b308566c2c7c30b53d797bf5ed83859f72b512070"
+  },
+  {
+    "module": "exports",
+    "function": "_unit_sphere_xyz",
+    "notebook_cell": 50,
+    "normalized_ast_equal": true,
+    "sha256": "78e4a6660b9b4f97c303949139a5998e082b8ca13821ef06269e420eacd6e283"
+  },
+  {
+    "module": "exports",
+    "function": "_load_scene_pixels",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "0287c6437115108bd737710796709d7dba836b4a87c692539965340ec6046521"
+  },
+  {
+    "module": "exports",
+    "function": "_primary_selector",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "30e77a67123d0a248d8a423886d48b78e91a4e0fdfcea54bab50d461e5ea13b4"
+  },
+  {
+    "module": "exports",
+    "function": "_compact_qa_metadata",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "c7c6ce5b140c9554749826458ef883f9ce37c74f7276f4db33e1dc00aeea7a31"
+  },
+  {
+    "module": "exports",
+    "function": "_science_geographic_setup_v265",
+    "notebook_cell": 58,
+    "normalized_ast_equal": true,
+    "sha256": "a285c328f559b1f48ea668a5fc7c1527ad32e44bdcdd87d04aedd796c2d3ef62"
+  },
+  {
+    "module": "exports",
+    "function": "_scene_analysis_lakes_v267",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true,
+    "sha256": "3250792340024593ec6c3c9da186d8d734ce1cec3208c0b2e689c706a54bce21"
+  },
+  {
+    "module": "exports",
+    "function": "_dedupe_target_assignments_v267",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true,
+    "sha256": "5c28584a312078a18de11f9c82fbc8e32d986bcfede327f2cca4ff5ebc809c32"
+  },
+  {
+    "module": "exports",
+    "function": "_native_assignments_geographic_v267",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true,
+    "sha256": "a787e11a83672a83030ceee5392bfa46efeac85e907dcf379f12e2bbe2717597"
+  },
+  {
+    "module": "exports",
+    "function": "export_complete_scene_science_netcdf",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true,
+    "sha256": "40b1fed92ed0cf66c980623f602829b0aa7602dd5a62e0412107c795f5b09fc7"
+  },
+  {
+    "module": "exports",
+    "function": "_share_all_index_stats",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true,
+    "sha256": "4e16adad7678768b22a32e1b4ba084ff04d557bd3b0f56ec8b1846608bc045c1"
+  },
+  {
+    "module": "exports",
+    "function": "parse_s3_frame_metadata",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true,
+    "sha256": "87f23e8c6368fe949b4a0f8155ac9d5ef6052425cbabf1788ba677b1c52ed5e3"
+  },
+  {
+    "module": "exports",
+    "function": "create_scene_share_bundle",
+    "notebook_cell": 59,
+    "normalized_ast_equal": true,
+    "sha256": "77f1c08c803bfb559a8c403ec86cb7e396e3e039a0eef30568142122d74138d2"
+  },
+  {
+    "module": "hydrolakes",
+    "function": "erode_lake_geometries",
+    "notebook_cell": 29,
+    "normalized_ast_equal": true,
+    "sha256": "15efe70a96456ce7a49d89747fd3e9fcc5ff503b87ce1b464c2bf295aee8ad32"
+  },
+  {
+    "module": "l2gen",
+    "function": "l2_products",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true,
+    "sha256": "9f4a39d34b76e1fe1cee7a647447329587cde626d8009a0699b3bdae6c0d32bc"
+  },
+  {
+    "module": "l2gen",
+    "function": "write_par_file",
+    "notebook_cell": 17,
+    "normalized_ast_equal": true,
+    "sha256": "e6f0507498f51aaf49fd7aef8c3b07ee219a037b2f8247fa1c387d451cce2c3b"
+  },
+  {
+    "module": "l2gen",
+    "function": "product_basename",
+    "notebook_cell": 17,
+    "normalized_ast_equal": true,
+    "sha256": "398b63226cef6a88f6ed844e04f816e25c83bf40ddad7f58dbe45b66764f9d56"
+  },
+  {
+    "module": "l2gen",
+    "function": "olci_acquisition_interval",
+    "notebook_cell": 17,
+    "normalized_ast_equal": true,
+    "sha256": "fac6cca10e0a0fe298b5e96659a37c24bb2e400fc8aa5f364cac32bcc516b2b0"
+  },
+  {
+    "module": "l2gen",
+    "function": "validate_l2_file",
+    "notebook_cell": 29,
+    "normalized_ast_equal": true,
+    "sha256": "3c362e9d3ccab0baebf6d6efd21702914ebe2fb312ea0d520aab0c822129f29e"
+  },
+  {
+    "module": "l2gen",
+    "function": "_l2gen_rhos_product_name",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true,
+    "sha256": "447eb70469871f6cfdb869543ede40e014b59056be12292cf16c09ef896d29da"
+  },
+  {
+    "module": "runtime",
+    "function": "require_ocssw",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true,
+    "sha256": "5057af3211a2482fa9523d475eb02e2e7fdd2e299624f0e85585fa477ba00d72"
+  },
+  {
+    "module": "science",
+    "function": "to_float",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true,
+    "sha256": "9cf8f16a7604c5f32f7984eb07ddf7bc8bdd8774307df8f6f4a6e6f070b3b0c8"
+  },
+  {
+    "module": "science",
+    "function": "product_wavelength",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true,
+    "sha256": "796b82f0408421821f0746b319b898d5b92720986b80934be778e0d0aa32f822"
+  },
+  {
+    "module": "science",
+    "function": "nearest_product",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true,
+    "sha256": "0488fc737580556cfe95b154ea7825199c7185daa2f80d424acd5bcc715d285e"
+  },
+  {
+    "module": "science",
+    "function": "decode_flag_metadata",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true,
+    "sha256": "2a99a0cf3ee199532c40139aafce8e5d1aa529788f3978df44252e6e59a1447f"
+  },
+  {
+    "module": "science",
+    "function": "flag_is_set",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true,
+    "sha256": "e63990aca999152eb5b23b4c9552b94e9291a73ebb08e4248a2790290e76319b"
+  },
+  {
+    "module": "science",
+    "function": "locate_l2_flags",
+    "notebook_cell": 19,
+    "normalized_ast_equal": true,
+    "sha256": "11fdf614c0810e853dec736c8e1e99c0d87db29947e1ef3825c79b73f6acc2d4"
+  },
+  {
+    "module": "science",
+    "function": "ci_family",
+    "notebook_cell": 30,
+    "normalized_ast_equal": true,
+    "sha256": "c4636ce804cb0054fccd99307da44c0e445d1b2256922ae01238fc62e118f8bc"
+  },
+  {
+    "module": "science",
+    "function": "ndci_index",
+    "notebook_cell": 20,
+    "normalized_ast_equal": true,
+    "sha256": "d73d64cd3b641c73f21729f4a7835d6a05d8f723a4475fd7b4c5f9670e53c08c"
+  },
+  {
+    "module": "science",
+    "function": "_spectral_line_height",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true,
+    "sha256": "ffaff6d3d2ed8ef74b7fbc8f9d11b5a4ef116c738ca9af06896da6908fb9befb"
+  },
+  {
+    "module": "science",
+    "function": "additional_olci_indices",
+    "notebook_cell": 48,
+    "normalized_ast_equal": true,
+    "sha256": "9cb32795e4cb303a561a75a975821b00c57f043d5a8cc1bb6bd8a9c756e11789"
+  },
+  {
+    "module": "staging",
+    "function": "safe_extract_zip",
+    "notebook_cell": 15,
+    "normalized_ast_equal": true,
+    "sha256": "6678faca8117262d38ecb8d2ea980924632413a0225c381861ad1131ad851661"
+  },
+  {
+    "module": "staging",
+    "function": "validate_sen3",
+    "notebook_cell": 15,
+    "normalized_ast_equal": true,
+    "sha256": "1488455c57ea684a42d595a8f8f884a9b8cd0e2daafd662474c35ac2b22f24de"
+  },
+  {
+    "module": "staging",
+    "function": "stage_existing_input",
+    "notebook_cell": 15,
+    "normalized_ast_equal": true,
+    "sha256": "e9bfdbcd7a5ee903f2bc03bca0267b9bb6b5cd2175a91a08f7a74ba9ad3bd9ec"
+  },
+  {
+    "module": "staging",
+    "function": "temporary_s3_client",
+    "notebook_cell": 40,
+    "normalized_ast_equal": true,
+    "sha256": "31f1d2d56be7d681bddb5de1dd5a02b781c7e0740d3dd68bcabf9f984e772d43"
+  },
+  {
+    "module": "staging",
+    "function": "_split_s3_path",
+    "notebook_cell": 40,
+    "normalized_ast_equal": true,
+    "sha256": "8492423aff4141144dedd3b70b5b7c2f64c99dfa77eb65b79c4c35343cc159fc"
+  },
+  {
+    "module": "statistics",
+    "function": "compact_stats",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "843ae77ffc5b1b4a58c2cc8db3da5648ae59e44886650b2da2985c28f713faf2"
+  },
+  {
+    "module": "statistics",
+    "function": "_mask_values_from_ds",
+    "notebook_cell": 57,
+    "normalized_ast_equal": true,
+    "sha256": "819529311a7fea49be78add77391bed9d6fdc04f9f9f23768c8daf0b7418d703"
+  },
+  {
+    "module": "utils",
+    "function": "utc_now",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true,
+    "sha256": "7a31bcfa4cb755b14361b09e9c7b98d16a4c9a177c2a6a9ff38ca42604e3b3ec"
+  },
+  {
+    "module": "utils",
+    "function": "human_size",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true,
+    "sha256": "1af28e124ae83c2344e6cc98e84d9fd81205efea97f0673276d4167bbe0bc5e4"
+  },
+  {
+    "module": "utils",
+    "function": "sha256_file",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true,
+    "sha256": "d192a4c2b2c2a891ff491981d43d3cf1bce3db290f9d1445162cae9914584189"
+  },
+  {
+    "module": "utils",
+    "function": "write_json",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true,
+    "sha256": "57d915f777e690f4cf1d6c390691c820d21785882ede07720836078fe26e473f"
+  },
+  {
+    "module": "utils",
+    "function": "run_logged",
+    "notebook_cell": 12,
+    "normalized_ast_equal": true,
+    "sha256": "1a1e0ccc22ef51adf720a9adf74c16da4b08a77b9dcbeb38eb5115d0d6d485f4"
+  },
+  {
+    "module": "windows",
+    "function": "_expanded_lonlat_box",
+    "notebook_cell": 42,
+    "normalized_ast_equal": true,
+    "sha256": "9eb18a83b29d54fb1bac7039a8f635380c131b617b4432a5cee46bfd8ea9c033"
+  },
+  {
+    "module": "windows",
+    "function": "plan_scene_windows",
+    "notebook_cell": 42,
+    "normalized_ast_equal": true,
+    "sha256": "30475fdde3d88cbd2540814ed517e5fd2cd63c87421fae8d4cc0e26db0bfbdd6"
+  },
+  {
+    "module": "windows",
+    "function": "window_id",
+    "notebook_cell": 42,
+    "normalized_ast_equal": true,
+    "sha256": "fd693522942c4067a06e7899364f2ad4de843642d456fe091e3182018df1e89a"
+  },
+  {
+    "module": "windows",
+    "function": "lakes_for_window",
+    "notebook_cell": 42,
+    "normalized_ast_equal": true,
+    "sha256": "b373c11798224df0815f97ecdea5c3c8559cd63009e2a65dd71e803f94c1d698"
+  }
+]

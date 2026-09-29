@@ -1,0 +1,175 @@
+{
+  "scene_id": "08d76a5e-d66c-4e3c-b59f-d0bdd3d463c7",
+  "cli_lakes": 5331,
+  "shared_lakes": 791,
+  "columns": 41,
+  "mismatches": 0,
+  "rtol": 1e-12,
+  "atol": 1e-15,
+  "checks": [
+    {
+      "column": "Lake_area_km2",
+      "mismatches": 0
+    },
+    {
+      "column": "native_lake_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "primary_retained_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "generic_flag_exclusion_sensitivity_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "bloom_rescued_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "CLDICE_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "cloud_excluded_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "bloom_rescue_fraction_of_CLDICE",
+      "mismatches": 0
+    },
+    {
+      "column": "ci_input_valid_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "ci_candidate_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "ci_cyano_detection_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_valid_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_mean",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_median",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_p10",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_p90",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_max",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_cyano_valid_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_cyano_mean",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_cyano_median",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_cyano_p10",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_cyano_p90",
+      "mismatches": 0
+    },
+    {
+      "column": "CI_cyano_max",
+      "mismatches": 0
+    },
+    {
+      "column": "NDCI_valid_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "NDCI_mean",
+      "mismatches": 0
+    },
+    {
+      "column": "NDCI_median",
+      "mismatches": 0
+    },
+    {
+      "column": "NDCI_p10",
+      "mismatches": 0
+    },
+    {
+      "column": "NDCI_p90",
+      "mismatches": 0
+    },
+    {
+      "column": "NDCI_max",
+      "mismatches": 0
+    },
+    {
+      "column": "MPH_valid_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "MPH_mean",
+      "mismatches": 0
+    },
+    {
+      "column": "MPH_median",
+      "mismatches": 0
+    },
+    {
+      "column": "MPH_p10",
+      "mismatches": 0
+    },
+    {
+      "column": "MPH_p90",
+      "mismatches": 0
+    },
+    {
+      "column": "MPH_max",
+      "mismatches": 0
+    },
+    {
+      "column": "FAI_valid_pixels",
+      "mismatches": 0
+    },
+    {
+      "column": "FAI_mean",
+      "mismatches": 0
+    },
+    {
+      "column": "FAI_median",
+      "mismatches": 0
+    },
+    {
+      "column": "FAI_p10",
+      "mismatches": 0
+    },
+    {
+      "column": "FAI_p90",
+      "mismatches": 0
+    },
+    {
+      "column": "FAI_max",
+      "mismatches": 0
+    }
+  ]
+}

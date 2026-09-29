@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import hashlib
 import json
 import uuid
-from .common import atomic_json, file_lock, utcnow
+from .common import atomic_json, file_lock, utcnow, digest
 from .ledger import Ledger
 from . import references
 from .identity import science_fingerprint
@@ -23,20 +23,22 @@ def date_chunks(start, end):
         first = stop + timedelta(days=1)
 
 
-def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=None):
-    from .core.catalogue import search_olci_l1_catalog, candidate_lakes_for_scene
+def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=None, lake_region="WORLD"):
+    from .core.catalogue import search_olci_l1_catalog, candidate_lakes_for_scene, scene_geometry
     from shapely import union_all
 
     workspace.ensure()
     m = references.manifest(workspace)
     if m["coverage"] != "global":
         raise ValueError(
-            "Full-scene processing requires globally prepared references; use a global reference directory"
+            "Notebook processing requires globally prepared reference sources; use a global reference directory"
         )
-    intervals = list(date_chunks(start, end))
-    lakes = references.load_lakes(workspace)
+    list(date_chunks(start, end))  # Validate inclusive date order before catalogue access.
+    lakes = references.load_lakes(workspace, region=lake_region)
+    usa_checksum = digest(workspace.references / "cb_2025_us_state_5m.zip") if lake_region == "USA" else None
     pool = lakes
     bbox = None
+    geom = None
     if state_id and not country:
         raise ValueError("A state selection also requires --country")
     if country:
@@ -52,18 +54,19 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
     if pool.empty:
         raise ValueError("No eligible lakes in selected region")
     scenes = {}
-    for a, b in intervals:
-        # Date shards bound catalogue pagination; no arbitrary catalogue cap is
-        # applied before lake filtering. max_scenes counts eligible scene IDs.
-        for scene in search_olci_l1_catalog(a, b, bbox=bbox):
+    for a, b in [(start, end)]:
+        # Match the notebook: cap raw catalogue results before regional filtering.
+        for scene in search_olci_l1_catalog(a, b, bbox=bbox, max_products=max_scenes):
             if scene["satellite"] not in ("S3A", "S3B"):
                 continue
             uuid.UUID(scene["id"])
             if scene["id"] in scenes:
                 continue
-            if not scene.get("geofootprint"):
-                raise ValueError(f"Missing catalogue footprint: {scene['id']}")
-            if candidate_lakes_for_scene(scene, pool).empty:
+            sg = scene_geometry(scene)
+            if geom is not None and (sg is None or not sg.intersects(geom)):
+                continue
+            subset = candidate_lakes_for_scene(scene, pool)
+            if subset.empty:
                 continue
             all_hits = candidate_lakes_for_scene(scene, lakes)
             groups = all_hits[
@@ -77,18 +80,18 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
                 }
                 for r in groups.itertuples()
             ]
-            scene["candidate_lakes"] = len(all_hits)
+            scene["candidate_lakes"] = int(len(subset))
+            scene["lake_region"] = lake_region
+            scene["lake_region_source_sha256"] = usa_checksum
             scenes[scene["id"]] = scene
-            if max_scenes and len(scenes) >= max_scenes:
-                break
-        if max_scenes and len(scenes) >= max_scenes:
-            break
     selection = {
         "start": start,
         "end": end,
         "country": country,
         "state_id": state_id,
         "max_scenes": max_scenes,
+        "lake_region": lake_region,
+        "lake_region_source_sha256": usa_checksum,
     }
     payload = {
         "schema": "cyanotrend-plan-1",

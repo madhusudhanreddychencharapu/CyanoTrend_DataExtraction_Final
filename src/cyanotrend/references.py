@@ -135,7 +135,7 @@ def boundaries(workspace, level="ADM1"):
     return gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=4326)
 
 
-def load_lakes(workspace, with_admin=True):
+def load_lakes(workspace, with_admin=True, region="WORLD"):
     import geopandas as gpd
 
     m = manifest(workspace)
@@ -163,6 +163,18 @@ def load_lakes(workspace, with_admin=True):
         raise ValueError("Duplicate HydroLAKES IDs in source")
     g["latitude"] = g["Pour_lat"]
     g["longitude"] = g["Pour_long"]
+    if region not in {"WORLD", "USA"}:
+        raise ValueError("HydroLAKES region must be WORLD or USA")
+    if region == "USA":
+        # Same Census polygon source and full-polygon intersection as cell 29.
+        from shapely import union_all
+        with file_lock(workspace.references / ".usa-boundary.lock"):
+            states_zip = fetch(
+                "https://www2.census.gov/geo/tiger/GENZ2025/shp/cb_2025_us_state_5m.zip",
+                workspace.references / "cb_2025_us_state_5m.zip",
+            )
+        states = gpd.read_file(f"zip://{states_zip}").to_crs(4326)
+        g = g[g.intersects(union_all(states.geometry.values))].copy().reset_index(drop=True)
     if with_admin:
         g = assign_states(g, boundaries(workspace))
     return g

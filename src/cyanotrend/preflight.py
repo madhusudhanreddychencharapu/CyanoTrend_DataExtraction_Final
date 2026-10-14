@@ -24,6 +24,7 @@ def check(workspace):
         "requests",
         "boto3",
         "tqdm",
+        "rasterio",
     ):
         try:
             mod = importlib.import_module(name)

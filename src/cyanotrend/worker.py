@@ -28,9 +28,9 @@ def candidate_path(workspace, sid):
     return workspace.output / ".pending" / f"{sid}.zip"
 
 
-def build_bundle(workspace, scene, reference_id, raster, stats, metadata):
-    """Publish the notebook's three share members; add only requested CSV metadata."""
-    from .schema import COLUMNS
+def build_bundle(workspace, scene, reference_id, raster, stats, metadata, comparison):
+    """Publish science, enriched stats, NASA comparison and provenance together."""
+    from .schema import COLUMNS, COMPARISON_COLUMNS
     path = candidate_path(workspace, scene["id"])
     path.parent.mkdir(exist_ok=True)
     temp = path.with_suffix(".zip.part")
@@ -39,6 +39,10 @@ def build_bundle(workspace, scene, reference_id, raster, stats, metadata):
     if list(stats.columns) != COLUMNS:
         raise ValueError("Notebook export columns differ from the approved schema")
     stats.to_csv(csv_path, index=False)
+    comparison_path = raster.parent / f"{prefix}_NASA_CYAN_COMPARISON.csv"
+    if list(comparison.columns) != COMPARISON_COLUMNS:
+        raise ValueError("NASA comparison columns differ from the approved schema")
+    comparison.to_csv(comparison_path, index=False)
     meta = {
         **metadata,
         "software_version": __import__("cyanotrend").__version__,
@@ -47,11 +51,13 @@ def build_bundle(workspace, scene, reference_id, raster, stats, metadata):
         "reference_id": reference_id,
         "statistics_rows": len(stats),
         "coordinate_source": {"latitude": "HydroLAKES Pour_lat", "longitude": "HydroLAKES Pour_long"},
-        "sha256": {raster.name: digest(raster), csv_path.name: digest(csv_path)},
+        "files": {**metadata.get("files", {}), "nasa_cyan_comparison_csv": comparison_path.name},
+        "sha256": {raster.name: digest(raster), csv_path.name: digest(csv_path), comparison_path.name: digest(comparison_path)},
     }
     with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
         z.write(raster, raster.name)
         z.write(csv_path, csv_path.name)
+        z.write(comparison_path, comparison_path.name)
         z.writestr(f"{prefix}_METADATA.json", json.dumps(clean_json(meta), indent=2, default=str, allow_nan=False))
     with temp.open("rb") as f:
         os.fsync(f.fileno())
@@ -151,6 +157,12 @@ def process(workspace, sid, attempt):
                     additional = lakes[["Hylak_id", "state_name", "state_id", "latitude", "longitude"]]
                     table = table.merge(additional, on="Hylak_id", how="left", validate="many_to_one", sort=False)
                     raster = exports.EXPORT_DIR / "snap_complete" / meta["files"]["snap_all_science_netcdf"]
+                with metrics.stage("nasa_cyan_comparison"):
+                    from .nasa_cyan import compare_scene
+                    table, comparison, nasa_metadata = compare_scene(
+                        table, lakes, scene["start"], workspace.references / "obpg_cyan"
+                    )
+                    meta["nasa_cyan_comparison"] = nasa_metadata
                 with metrics.stage("packaging"):
                     # Native compact outputs remain available like the notebook; L1/L2 are temporary.
                     native_dir = workspace.archive(scene).parent / f"{sid}_{config_hash}_native"
@@ -175,7 +187,7 @@ def process(workspace, sid, attempt):
                         "timings": ledger.scene(sid)["timings"],
                         "attempt": attempt,
                     })
-                    build_bundle(workspace, scene, record["reference_id"], raster, table, meta)
+                    build_bundle(workspace, scene, record["reference_id"], raster, table, meta, comparison)
             ledger.update(sid, stage="ready_to_publish")
         except BaseException as e:
             atomic_json(

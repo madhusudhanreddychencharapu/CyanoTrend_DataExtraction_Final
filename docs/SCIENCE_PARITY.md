@@ -4,6 +4,12 @@ The user-supplied v2.6.8 notebook is authoritative. SHA256 and original final-sh
 column order are in reference.json. Notebook cell indices are zero-based.
 No notebook is imported or executed at application runtime.
 
+Approved extension (2026-10-14): local detection now uses strictly CI > 0.0
+with existing spectral and QA conditions, replacing the reference threshold.
+NASA daily raw-DN whole-lake counts are added separately; see
+[NASA comparison](NASA_CYAN_COMPARISON.md). This changes the processing hash and
+the output contract; historical numerical parity evidence is not a new-run guarantee.
+
 Effective source functions are copied into standalone Python modules:
 
 - Cell 42: adaptive windows, margin 3 km, max 6, fraction threshold 0.35, and window IDs.
@@ -26,8 +32,11 @@ science_audit.json includes remaining operational/context differences.
 
 ## Final CSV
 
-Scene CSV, master and backup use the exact final notebook export names/order,
-followed only by state_name, state_id, latitude, longitude. There are 50 columns.
+Scene CSV, master and backup preserve the final notebook names/order, with
+NASA_CI_Cyano_detectable_cells inserted between ci_cyano_detection_pixels and
+CI_valid_pixels, followed by state_name, state_id, latitude, longitude.
+There are 51 columns. Detailed NASA measurements and traceability are confined
+to the added NASA_CYAN_COMPARISON.csv and metadata JSON.
 The earlier compact_stats function remains unchanged for reference, but its
 per-window column names are not substituted into the final scene/master outputs.
 Coordinates appended to CSV are original HydroLAKES Pour_lat/Pour_long. Pixel
@@ -42,15 +51,15 @@ previous-successful-master backup, locks/recovery and CLI telemetry remain.
 A separate process owns each export context, so no mutable notebook globals are
 shared across concurrent scenes. Output filenames/folder root, timestamps,
 operational checksums, and added state metadata cannot be byte-identical to Colab.
-Native outputs remain alongside the three-file share ZIP. Successful scratch is
+Native outputs remain alongside the four-file published ZIP. Successful scratch is
 removed; failed scratch is retained. An empty native scene completes without a
 fabricated NetCDF/share ZIP, as the notebook's processing/share distinction requires.
 
 ## Evidence and limits
 
-The actual supplied Colab config hash 58f41b2c1318eaf1 is reproduced from USA,
-minimum area 1.3 and notebook adaptive defaults. WORLD yields 5cab52e25b49b846.
-The implemented final share writer reproduces all 41 numeric reference columns
+Historically, the supplied Colab config hash 58f41b2c1318eaf1 was reproduced from USA,
+minimum area 1.3 and the old threshold; WORLD yielded 5cab52e25b49b846.
+The new zero threshold intentionally changes both hashes. The earlier final share writer reproduced all 41 numeric reference columns
 for all 791 shared lakes from the supplied native observations at rtol=1e-12,
 atol=1e-15; counts agree exactly. See supplied_scene_comparison.json.
 The 4,540 additional global lakes are all Canada-labelled in the supplied older

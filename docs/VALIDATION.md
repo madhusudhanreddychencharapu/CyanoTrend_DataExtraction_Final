@@ -1,5 +1,36 @@
 # Validation record — notebook parity correction
 
+## 2026-10-14: approved NASA DN comparison and zero local threshold
+
+Current offline suite: **37 passed, none skipped**. The test runner and missing
+test dependencies were installed only under `/private/tmp/cyan-nasa-test-deps`;
+no production or remote environment was modified.
+
+New checks cover DN 0/1/250/251/252/253/254/255, counting TIFF nodata 255,
+actual affine pixel area (including a non-300 m synthetic fixture), whole-lake
+multi-tile coverage, overlap deduplication, conflict/misalignment rejection,
+genuine zero versus blank measurements, unavailable/network failures, a covering
+single-tile shortcut, regional fallback without double counting, invalid-download
+cleanup, cached-file reuse without authentication, UTC date selection, weekly
+product exclusion, and positive local CI below the former threshold.
+Existing worker/publication tests now verify the 51-column statistics and
+four-member ZIP contract, previous-master backup, crash recovery and concurrent
+workers. All frozen notebook function-body checks still pass; the explicitly
+approved detection constants and output schema have changed.
+
+Real-file read-only check: a 12 km by 12 km test polygon crossing the existing
+2024-08-14 CONUS 6_2/6_3 seam produced exactly the same counts from the two tiles
+as from the complete CONUS GeoTIFF: 1,600 cells, 1,469 DN0, 0 DN1–253, 4 DN254,
+127 DN255, and 144.0 km². NASA's live public CMR catalogue selected both tiles.
+This test polygon is not a named lake and is not a full scientific scene validation.
+
+The environment emitted Rasterio/NumPy deprecation warnings and an extension
+ABI-size warning on import; all tests passed. Authenticated NASA downloading,
+real Alaska raster handling, and a fresh Linux OCSSW scene have not been exercised.
+See [NASA comparison](NASA_CYAN_COMPARISON.md) for the new contract and data sources.
+
+## Historical notebook parity evidence (before the zero-threshold extension)
+
 Local validation: 25 tests passed, none skipped, using an isolated temporary
 Python 3.12 environment. No remote Conda environment was modified.
 

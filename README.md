@@ -11,10 +11,17 @@ or executes a notebook at runtime. No Gradio, HTML maps or frontend are included
 - Notebook adaptive windows: 3 km margin, at most six windows, whole-scene fallback at 35% coverage or dateline/other notebook fallback cases. One scene ID is shared across overlapping plans with the same loaded HydroLAKES universe.
 - Five independent scene subprocesses by default; three attempts total.
 - Persistent queue: new saved plans are picked up while the service is running.
-- The notebook three-file scene ZIP: `S3_OLCI_<id>_ALL_SCIENCE_300m_CF.nc`,
-  `S3_OLCI_<id>_ALL_INDEX_STATS.csv`, and `S3_OLCI_<id>_METADATA.json`.
-- Exactly the notebook final export's 46 column names/order, followed by
-  `state_name`, `state_id`, `latitude`, `longitude`: 50 columns in scene/master/backup.
+- Four-file scene ZIP: `S3_OLCI_<id>_ALL_SCIENCE_300m_CF.nc`,
+  `S3_OLCI_<id>_ALL_INDEX_STATS.csv`, `S3_OLCI_<id>_NASA_CYAN_COMPARISON.csv`,
+  and `S3_OLCI_<id>_METADATA.json`.
+- The notebook's 46 columns with `NASA_CI_Cyano_detectable_cells` inserted between
+  `ci_cyano_detection_pixels` and `CI_valid_pixels`, followed by `state_name`,
+  `state_id`, `latitude`, `longitude`: 51 columns in scene/master/backup.
+- Local detection is strictly CI > 0.0 with the existing spectral/QA gates.
+  NASA detections are raw DN 1–253, without conversion to intensity.
+  Whole-lake daily NASA counts use all required original tiles; incomplete or
+  unavailable NASA coverage leaves blank measurements and a logged warning.
+  See [NASA comparison](docs/NASA_CYAN_COMPARISON.md) for area and traceability.
 - Native window NetCDFs are retained next to the ZIP for verification, as in the notebook.
 - `--lake-region WORLD` (notebook default) or `USA` controls loaded HydroLAKES, independently of the planning state. USA uses the notebook Census polygon intersection, not a Country-column filter.
 - One coordinator publishes the master CSV. The backup is the **previous successful
@@ -34,7 +41,8 @@ or executes a notebook at runtime. No Gradio, HTML maps or frontend are included
 
 ```text
 CyanoTrend_Final_DataExtraction/
-  reference_data/               # downloaded once; not copied into scene ZIPs
+  reference_data/               # retained references; not copied into scene ZIPs
+    obpg_cyan/                  # shared daily NASA GeoTIFF cache
   .scratch/                     # temporary, isolated by scene UUID
   Output Data/
     master.csv
@@ -58,11 +66,12 @@ A same-scene notebook comparison is still required before scaling production.
 ## Upgrading the earlier full-scene CLI
 
 Use a new output directory for the corrected implementation. Old plans are bound
-to old source fingerprints; old 46-column masters cannot be mixed with the new
-50-column final-export schema. Existing results are not rewritten or relabelled.
+to old source fingerprints; old 46/50-column masters cannot be mixed with the new
+51-column final-export schema. Existing results are not rewritten or relabelled.
 
 The supplied 791-lake Colab run has configuration hash `58f41b2c1318eaf1`.
-The notebook hash is reproduced by area 1.3, region USA, and adaptive windows.
+That historical hash used the old detection threshold; the approved CI > 0.0
+setting intentionally creates a new processing hash.
 WORLD has a different population/hash and need not produce 791 lake rows.
 For that reference comparison select `--lake-region USA`; planning `--country USA`
 alone is NOT the HydroLAKES population selection.

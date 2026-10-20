@@ -1,5 +1,22 @@
 # Validation record — notebook parity correction
 
+## 2026-10-20: additional daily workflow and approved newer CI formula
+
+**55 tests passed, none skipped**, in an isolated temporary Python environment.
+The new daily tests cover independent maximum passes, platform separation,
+cloud-free preference, DN-based detection counting, shared map bounds, missing
+input rejection, lake-specific scene lists, private OCSSW product definitions,
+and a complete mocked daily publication retaining the selected state's folder
+and leaving existing master bytes untouched. Formula tests cover the requested
+newer factor-1 arithmetic, actual wavelengths, detection gates and cache separation.
+
+The frozen notebook contracts exempt only the explicitly changed formula and
+configuration hash; their historical hashes remain on disk. AST serialization
+was made compatible with Python 3.13. The low-CI fixture continues testing the unchanged zero threshold.
+
+Real OCSSW processing and NASA numerical parity have not been run. The user selected the verified newer NASA source formula, NASA 8-bit DN output,
+and an automatic shared grid enclosing all selected lakes. See [daily products](DAILY_PRODUCTS.md).
+
 ## 2026-10-14: approved NASA DN comparison and zero local threshold
 
 Current offline suite: **37 passed, none skipped**. The test runner and missing

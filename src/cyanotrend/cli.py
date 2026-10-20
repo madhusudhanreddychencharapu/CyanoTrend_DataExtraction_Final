@@ -107,6 +107,17 @@ def parser():
         "verify", help="Verify completed archive checksums and master CSV row identity"
     )
     q.add_argument("--scene-id")
+    q = sub.add_parser(
+        "daily", help="Create an additional lake/day CSV and CIcyano TIFF ZIP from a completed state plan"
+    )
+    q.add_argument("--plan", required=True, help="Saved, uncapped country/state plan JSON")
+    q.add_argument("--date", required=True, help="UTC acquisition date, YYYY-MM-DD")
+    q.add_argument("--l1-dir", help="Existing .SEN3 directories or ZIPs; otherwise download again")
+    q.add_argument("--tiff-encoding", default="nasa-dn", choices=("physical", "nasa-dn"),
+                   help="Default: NASA 8-bit DN; daily counts always use DN 1..253")
+    q.add_argument("--map-bounds", nargs=4, type=float,
+                   metavar=("WEST", "SOUTH", "EAST", "NORTH"),
+                   help="Optional shared extent override; default encloses all selected whole lakes")
     return p
 
 
@@ -251,6 +262,15 @@ def dispatch(a):
         return serve(ws, a.workers, a.once)
     if a.command == "verify":
         return verify(ws, a.scene_id)
+    if a.command == "daily":
+        from .daily.service import run_daily
+        if not a.l1_dir and sys.stdin.isatty():
+            if not os.environ.get("CDSE_USERNAME"):
+                os.environ["CDSE_USERNAME"] = input("CDSE username: ").strip()
+            if not os.environ.get("CDSE_PASSWORD"):
+                os.environ["CDSE_PASSWORD"] = getpass.getpass("CDSE password (hidden): ")
+        return run_daily(ws, a.plan, a.date, a.l1_dir,
+                         tiff_encoding=a.tiff_encoding, map_bounds=a.map_bounds)
     ledger = Ledger(ws.db)
     if a.command == "status":
         return {
@@ -276,7 +296,7 @@ def main(argv=None):
     p = parser()
     a = p.parse_args(argv)
     try:
-        if a.json and a.command in ("prepare", "plan", "run"):
+        if a.json and a.command in ("prepare", "plan", "run", "daily"):
             from contextlib import redirect_stdout
 
             with redirect_stdout(sys.stderr):

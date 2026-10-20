@@ -9,6 +9,8 @@ import netCDF4
 import numpy as np
 from . import settings as _m_settings
 
+CI_FORMULA_VERSION = "olci-nasa-v2026.5-fac1-v1"
+
 
 def to_float(values: Any) -> np.ndarray:
     return np.ma.asarray(values).filled(np.nan).astype(np.float32, copy=False)
@@ -77,7 +79,12 @@ def ci_family(
     ss681_max: float = 0.0,
     ss665_min: float = 0.0,
 ) -> dict[str, np.ndarray]:
-    """Two-stage CI family with explicit, tunable spectral gates."""
+    """OLCI NASA spectral formula with the existing local eligibility gates.
+
+    OCSSW V2026.5 get_habs.c/get_habs_ci: OLCI fac=1, unscaled r681.
+    This formula-only change is not the full NASA HABS/cloud/turbidity pipeline.
+    The separate daily processor obtains those products from suite=CYAN.
+    """
     r620, r665, r681, r709 = [
         np.asarray(array, dtype=np.float32) for array in (r620, r665, r681, r709)
     ]

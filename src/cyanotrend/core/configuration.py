@@ -1,6 +1,7 @@
 """Notebook scientific settings identity (cell 57)."""
 import hashlib
 import json
+from .science import CI_FORMULA_VERSION
 from .settings import (
     ADDITIONAL_INDEX_NAMES,
     BLOOM_AWARE_HARD_FLAGS,
@@ -52,4 +53,6 @@ def processing_config_hash(min_area_km2: float, region: str = "WORLD") -> str:
         "region": str(region).upper(),
         "schema": V264_SCHEMA,
     }
+    if CI_FORMULA_VERSION is not None:
+        payload["ci_formula"] = CI_FORMULA_VERSION
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]

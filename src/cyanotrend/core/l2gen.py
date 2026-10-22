@@ -289,9 +289,13 @@ def run_l2gen(
     spectrum_tag = "SPEC" if full_spectrum else "CORE"
     output = _m_settings.L2_DIR / f"{name}_L2GEN_{suffix}_{scope_tag}_{spectrum_tag}.nc"
     products, required = l2_products(mode, full_spectrum)
+    # NASA CyAN V6 products: NASA's own CI and the HABS flags that carry its cloud test.
+    products.extend(p for p in CYAN_L2_PRODUCTS if p not in products)
+    required.update(CYAN_L2_PRODUCTS)
     if output.exists():
         try:
             info = validate_l2_file(output, required)
+            info["habs_cloud_update"] = _ensure_habs_cldice(output)
             info.update(
                 {
                     "mode": mode,
@@ -324,6 +328,11 @@ def run_l2gen(
             "ifile": sen3_path / "xfdumanifest.xml",
             "ofile": output,
             "l2prod": " ".join(products),
+            # NASA CyAN V6: suite=CYAN loads msl12_defaults_CYAN.par (CyAN 681/709 gains and the
+            # olci*_gas_transmittance_cyan.nc water-vapour table). gas_opt is not overridden:
+            # the OLCI default (431) uses that table; gas_opt=15 applied no water-vapour
+            # correction for OLCI (its msl12_sensor_info.dat has no a_h2o..g_h2o coefficients).
+            "suite": "CYAN",
             "proc_ocean": 2 if mode in {"full_swath_rhos", "rayleigh_ci"} else 1,
             "proc_land": 1,
             "maskland": 0,
@@ -334,11 +343,11 @@ def run_l2gen(
             "maskhilt": 0,
             "maskstlight": 0,
             "proc_uncertainty": 0,
-            "gas_opt": 15,
             "deflate": int(_m_settings.NETCDF_DEFLATE),
         }
         if mode in {"full_swath_rhos", "rayleigh_ci"}:
             parameters.update({"aer_opt": -99, "brdf_opt": 0})
+        parameters.update(_cyan_habs_cloud_option())
         if not process_full_scene:
             west, south, east, north = processing_bbox
             parameters.update(
@@ -372,9 +381,11 @@ def run_l2gen(
                 f"Optional product {unavailable} is unavailable; retrying without it."
             )
     info = validate_l2_file(output, required)
+    info["habs_cloud_update"] = _ensure_habs_cldice(output)
     info.update(
         {
             "mode": mode,
+            "l2gen_suite": "CYAN",
             "l2gen_version": _m_runtime.command_version(_m_settings.L2GEN_BIN),
             "processing_scope": "full_scene" if process_full_scene else "bbox",
             "processing_bbox": processing_bbox,
@@ -396,6 +407,81 @@ def _l2gen_rhos_product_name(wave: int) -> str:
     return (
         f"rhos_{_m_settings.OLCI_L2GEN_RHOS_NAME_OVERRIDES.get(int(wave), int(wave))}"
     )
+
+
+CYAN_L2_PRODUCTS = ("CI_cyano", "flags_habs")
+HABS_CLOUD_BIT = 0x01  # OCSSW src/l2gen/mph_flags.h: HABS_CLOUD
+
+
+def _cyan_habs_cloud_option() -> dict[str, Any]:
+    """Select NASA's HABS cloud test where the OCSSW build needs an explicit switch.
+
+    OCSSW up to V2025.x: eval bit 2 ("enables MODIS and MERIS cloud Mask for HABS")
+    makes setflags_l1.c use the HABS test for CLDICE and flags_habs.
+    From V2026.1 get_habs.c always applies get_cloudmask_habs and the eval bit no
+    longer exists. V2026.0 has neither path.
+    """
+    version = _m_runtime.command_version(_m_settings.L2GEN_BIN)
+    match = re.search(r"[VTR](20\d{2})\.(\d+)", version) or re.search(
+        r"(20\d{2})\.(\d+)", version
+    )
+    if not match:
+        print(
+            f"WARNING: could not read the OCSSW version from {version!r}; eval=2 not set "
+            "(it is only needed for OCSSW 2025 builds)."
+        )
+        return {}
+    year, minor = int(match.group(1)), int(match.group(2))
+    if year <= 2025:
+        return {"eval": 2}
+    if (year, minor) == (2026, 0):
+        print(
+            "WARNING: OCSSW V2026.0 cannot select NASA's HABS cloud test; "
+            "use V2025.x or V2026.1 or later."
+        )
+    return {}
+
+
+def _ensure_habs_cldice(path: Path) -> dict[str, Any]:
+    """Make the CLDICE bit of l2_flags equal NASA's HABS cloud decision (flags_habs).
+
+    NASA CyAN bins with flaguse LAND,CLDICE,HISATZEN, and from OCSSW V2026.2
+    get_cloudmask_habs itself clears and re-sets CLDICE from the HABS test. Applying
+    the same rule here gives compact.py NASA's cloud mask on every OCSSW version that
+    writes flags_habs, without changing the notebook-parity extraction code.
+    """
+    attribute = "cyanotrend_cldice_source"
+    with netCDF4.Dataset(path, "r+") as root:
+        if attribute in root.ncattrs():
+            return {"applied": False, "reason": "already applied"}
+        geo = root.groups["geophysical_data"]
+        if "flags_habs" not in geo.variables:
+            raise RuntimeError(f"{path} lacks flags_habs needed for the NASA CyAN cloud mask")
+        flags_var = _m_science.locate_l2_flags(root)
+        cldice = int(_m_science.decode_flag_metadata(flags_var)["CLDICE"])
+        habs_var = geo.variables["flags_habs"]
+        try:
+            habs_map = _m_science.decode_flag_metadata(habs_var)
+        except RuntimeError:
+            habs_map = {}
+        cloud_bits = sum({int(v) for k, v in habs_map.items() if "CLOUD" in k}) or HABS_CLOUD_BIT
+        set_on = cleared = 0
+        rows = flags_var.shape[0]
+        step = int(_m_settings.ROW_BLOCK_SIZE)
+        for start in range(0, rows, step):
+            sl = slice(start, min(rows, start + step))
+            flags_ma = np.ma.asarray(flags_var[sl, :])
+            flags = flags_ma.filled(0).astype(np.int64)
+            habs = np.ma.asarray(habs_var[sl, :]).filled(0).astype(np.int64)
+            cloud = (habs & cloud_bits) != 0
+            had = (flags & cldice) != 0
+            set_on += int(np.count_nonzero(cloud & ~had))
+            cleared += int(np.count_nonzero(~cloud & had))
+            new = np.where(cloud, flags | cldice, flags & ~cldice).astype(flags_var.dtype)
+            flags_var[sl, :] = np.ma.array(new, mask=np.ma.getmaskarray(flags_ma))
+        root.setncattr(attribute, "flags_habs HABS_CLOUD (NASA CyAN HABS cloud test)")
+    print(f"CLDICE replaced by NASA HABS cloud test: {set_on} pixels set, {cleared} cleared")
+    return {"applied": True, "cldice_set": set_on, "cldice_cleared": cleared}
 
 
 def _BASE_VALIDATE_L2_FILE_V5(

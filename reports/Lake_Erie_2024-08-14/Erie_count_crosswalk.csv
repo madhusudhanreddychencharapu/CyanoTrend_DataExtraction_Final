@@ -1,0 +1,8 @@
+native_summary_feature,native_count,pairs_feature,NASA_target_row_count
+primary_retained_pixels,233050,nearest_primary_bloom_aware_valid,251718
+generic_flag_exclusion_sensitivity_pixels,231727,nearest_generic_strict_valid,250013
+bloom_rescued_pixels,1323,nearest_bloom_rescued,1705
+CLDICE_pixels,33281,nearest_CLDICE,36744
+ci_input_valid_pixels,233050,local_ci_input_valid,251718
+ci_candidate_pixels,6994,local_ci_candidate,8832
+ci_cyano_detection_pixels,1721,local_ci_cyano_detected,2221

@@ -55,4 +55,7 @@ def processing_config_hash(min_area_km2: float, region: str = "WORLD") -> str:
     }
     if CI_FORMULA_VERSION is not None:
         payload["ci_formula"] = CI_FORMULA_VERSION
+        # NASA CyAN V6 l2gen configuration (l2gen.py): suite=CYAN, OLCI default gas_opt,
+        # CLDICE replaced by the HABS cloud test from flags_habs.
+        payload["l2gen_config"] = "suite=CYAN;gas_opt=olci_default;cldice=flags_habs_HABS_CLOUD"
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]

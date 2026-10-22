@@ -1,0 +1,7 @@
+audit_reason,NASA_grid_rows
+Both_detected,2183
+Local_only,38
+NASA_only_QA_rejected,5153
+NASA_only_candidate_not_detected,3587
+NASA_only_not_CI_candidate,614
+Neither_detected,275197

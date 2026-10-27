@@ -52,8 +52,10 @@
     "module": "compact",
     "function": "extract_lake_only_netcdf",
     "notebook_cell": 57,
-    "normalized_ast_equal": true,
-    "sha256": "0268d263aea5582de010cb10077f22b119a7aad0ce5db26fcdeca9acb1e20a03"
+    "normalized_ast_equal": false,
+    "sha256": "cf3fd72b9f97711d6d07081f4ec0f47c8d886a63e9b06221af9a2def343d9c97",
+    "notebook_sha256": "0268d263aea5582de010cb10077f22b119a7aad0ce5db26fcdeca9acb1e20a03",
+    "deviation": "Intentional deviation from the notebook for NASA CyAN V6 parity: HABS cloud mask (OCSSW get_cloudmask_meris) replaces CLDICE exclusion and bloom rescue; L2Gen suite=CYAN with default gas_opt."
   },
   {
     "module": "compact",
@@ -66,8 +68,10 @@
     "module": "configuration",
     "function": "processing_config_hash",
     "notebook_cell": 57,
-    "normalized_ast_equal": true,
-    "sha256": "86f64c874127071e52075f43d12504f7438335c644c4a507719d7ed830b68bf9"
+    "normalized_ast_equal": false,
+    "sha256": "ab465af212e7f947b7b32adbfe2ece7281afa52bac3330dacd41845b30c444fb",
+    "notebook_sha256": "86f64c874127071e52075f43d12504f7438335c644c4a507719d7ed830b68bf9",
+    "deviation": "Intentional deviation from the notebook for NASA CyAN V6 parity: HABS cloud mask (OCSSW get_cloudmask_meris) replaces CLDICE exclusion and bloom rescue; L2Gen suite=CYAN with default gas_opt."
   },
   {
     "module": "exports",

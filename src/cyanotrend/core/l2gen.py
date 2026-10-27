@@ -287,8 +287,19 @@ def run_l2gen(
         bbox_text = ",".join((f"{value:.6f}" for value in processing_bbox))
         scope_tag = "BBOX_" + hashlib.sha1(bbox_text.encode("utf-8")).hexdigest()[:10]
     spectrum_tag = "SPEC" if full_spectrum else "CORE"
-    output = _m_settings.L2_DIR / f"{name}_L2GEN_{suffix}_{scope_tag}_{spectrum_tag}.nc"
+    suite = _m_settings.L2GEN_SUITE
+    # Suite in the file name so L2 made with other gains/gas settings is never reused.
+    suite_tag = f"_{suite}" if suite else ""
+    output = (
+        _m_settings.L2_DIR
+        / f"{name}_L2GEN_{suffix}_{scope_tag}_{spectrum_tag}{suite_tag}.nc"
+    )
     products, required = l2_products(mode, full_spectrum)
+    # Inputs for the HABS cloud test (science.habs_cloud_mask): rhos_443 is
+    # required, cloud_albedo optional (falls back to rhos_865).
+    products = list(dict.fromkeys(products + list(_m_settings.HABS_CLOUD_L2_PRODUCTS)))
+    if _m_settings.CLOUD_MASK_METHOD.upper() == "HABS":
+        required = set(required) | {"rhos_443"}
     if output.exists():
         try:
             info = validate_l2_file(output, required)
@@ -316,7 +327,7 @@ def run_l2gen(
     anc_path = run_getanc(
         sen3_path, allow_fallback=_m_settings.ALLOW_CLIMATOLOGY_FALLBACK
     )
-    run_tag = f"{mode}_{scope_tag}_{spectrum_tag}".lower()
+    run_tag = f"{mode}_{scope_tag}_{spectrum_tag}{suite_tag}".lower()
     par_path = _m_settings.PAR_DIR / f"{name}_l2gen_{run_tag}.par"
     log_path = _m_settings.LOG_DIR / f"{name}_l2gen_{run_tag}.log"
     while True:
@@ -334,7 +345,12 @@ def run_l2gen(
             "maskhilt": 0,
             "maskstlight": 0,
             "proc_uncertainty": 0,
-            "gas_opt": 15,
+            # gas_opt is not set: the OLCI default (431) applies, which includes the
+            # table-based water-vapour correction. The former gas_opt=15 left H2O
+            # transmittance at 1.0 for OLCI (no coefficients in msl12_sensor_info.dat).
+            # suite=CYAN loads msl12_defaults_CYAN.par (CyAN gains + CyAN gas table);
+            # parameters set here still override the suite defaults.
+            "suite": suite,
             "deflate": int(_m_settings.NETCDF_DEFLATE),
         }
         if mode in {"full_swath_rhos", "rayleigh_ci"}:
@@ -372,14 +388,23 @@ def run_l2gen(
                 f"Optional product {unavailable} is unavailable; retrying without it."
             )
     info = validate_l2_file(output, required)
+    suite_check = l2gen_suite_provenance(log_path, output, suite)
+    if suite and not suite_check["suite_defaults_loaded"]:
+        print(
+            f"WARNING: L2Gen suite={suite} was requested but there is no evidence that "
+            f"msl12_defaults_{suite}.par was loaded. Check {log_path}."
+        )
     info.update(
         {
             "mode": mode,
+            "l2gen_suite_check": suite_check,
             "l2gen_version": _m_runtime.command_version(_m_settings.L2GEN_BIN),
             "processing_scope": "full_scene" if process_full_scene else "bbox",
             "processing_bbox": processing_bbox,
             "full_reflectance_spectra_requested": bool(full_spectrum),
             "reused_existing": False,
+            "l2gen_suite": suite,
+            "gas_opt": "suite/sensor default (not overridden)",
             "internal_output_masks_disabled": True,
             "rhos_scope": "complete geolocated swath where L2Gen computes finite values; LAND retained in l2_flags",
             "products_requested_final": products,
@@ -390,6 +415,47 @@ def run_l2gen(
     )
     print(f"L2 complete: {output} ({_m_utils.human_size(output.stat().st_size)})")
     return (output, info)
+
+
+def l2gen_suite_provenance(log_path: Path, l2_path: Path, suite: str | None) -> dict[str, Any]:
+    """Evidence that the L2Gen suite defaults (gains, gas table) were really used.
+
+    Two independent sources: the l2gen console log (defaults files and gas
+    transmittance file it reports reading) and the input parameters l2gen records
+    in the L2 file's processing_control/input_parameters group.
+    """
+    suite_par = f"msl12_defaults_{suite}.par" if suite else None
+    log_lines: list[str] = []
+    try:
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+        log_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if re.search(r"msl12_defaults|gas.?transmittance|_cyan\.nc", line, re.IGNORECASE)
+        ]
+    except OSError:
+        pass
+    recorded: dict[str, str] = {}
+    try:
+        with netCDF4.Dataset(l2_path) as root:
+            group = root.groups.get("processing_control")
+            params = group.groups.get("input_parameters") if group is not None else None
+            if params is not None:
+                for key in params.ncattrs():
+                    if key in {"suite", "gain", "gas_opt"} or "gas" in key or "defaults" in key:
+                        recorded[key] = str(params.getncattr(key))
+    except (OSError, KeyError):
+        pass
+    in_log = bool(suite_par) and any(suite_par in line for line in log_lines)
+    in_file = bool(suite) and recorded.get("suite", "").strip().upper() == str(suite).upper()
+    return {
+        "requested_suite": suite,
+        "suite_defaults_in_log": in_log,
+        "suite_recorded_in_l2": in_file,
+        "suite_defaults_loaded": (in_log or in_file) if suite else True,
+        "log_evidence": log_lines[:20],
+        "l2_input_parameters": recorded,
+    }
 
 
 def _l2gen_rhos_product_name(wave: int) -> str:

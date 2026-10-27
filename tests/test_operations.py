@@ -64,9 +64,18 @@ class Operations(unittest.TestCase):
             writer.writerow(
                 {"scene_id": s["id"], "Hylak_id": i + 1}
             )
+        from cyanotrend.schema import COMPARISON_COLUMNS
+        comparison = io.StringIO()
+        cwriter = csv.DictWriter(comparison, fieldnames=COMPARISON_COLUMNS)
+        cwriter.writeheader()
+        for i in range(rows):
+            cwriter.writerow(
+                {"scene_id": s["id"], "Hylak_id": i + 1, "NASA_CYAN_coverage_status": "unavailable"}
+            )
         contents = {
             f"S3_OLCI_{s['id']}_ALL_SCIENCE_300m_CF.nc": b"synthetic fixture, not scientific NetCDF",
             f"S3_OLCI_{s['id']}_ALL_INDEX_STATS.csv": buf.getvalue().encode(),
+            f"S3_OLCI_{s['id']}_NASA_CYAN_COMPARISON.csv": comparison.getvalue().encode(),
         }
         meta = {
             "scene": s,

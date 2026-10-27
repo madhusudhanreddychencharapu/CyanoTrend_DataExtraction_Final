@@ -26,8 +26,20 @@ def test_notebook_function_bodies_remain_equivalent():
         normalized=ast.dump(Normalize().visit(node),include_attributes=False).replace(", type_params=[]", "")
         assert hashlib.sha256(normalized.encode()).hexdigest()==contract['sha256'],contract
 
-def test_supplied_colab_configuration_hash():
+def test_deviations_from_notebook_are_documented():
+    root=Path(__file__).resolve().parents[1]
+    contracts=json.loads((root/'docs/notebook_function_contract.json').read_text())
+    for contract in contracts:
+        if not contract['normalized_ast_equal']:
+            assert contract.get('deviation') and contract.get('notebook_sha256'),contract
+
+def test_configuration_hash():
     from cyanotrend.core.configuration import processing_config_hash
-    # Independent expected value from the user's Colab scene metadata.
-    assert processing_config_hash(1.3, 'USA') == '58f41b2c1318eaf1'
-    assert processing_config_hash(1.3, 'WORLD') != '58f41b2c1318eaf1'
+    # '58f41b2c1318eaf1' is the user's original Colab configuration (CLDICE mask,
+    # gas_opt=15). The NASA CyAN V6 parity settings must hash differently so
+    # compact files from the old configuration are never reused.
+    colab = '58f41b2c1318eaf1'
+    current = processing_config_hash(1.3, 'USA')
+    assert current == 'bc18dd52cb01dcd4'
+    assert current != colab
+    assert processing_config_hash(1.3, 'WORLD') != current

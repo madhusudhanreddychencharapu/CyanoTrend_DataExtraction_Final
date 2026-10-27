@@ -126,3 +126,24 @@ TRUE_COLOR_RHOS_WAVELENGTHS = (665, 560, 490)
 BLOOM_RESCUE_REQUIRE_CI_CYANO = True
 BLOOM_RESCUE_REQUIRE_POSITIVE_AFAI = True
 BLOOM_RESCUE_REQUIRE_NIR_OVER_BLUE = True
+
+# NASA CyAN V6 parity (see docs/NASA_CYAN_COMPARISON.md).
+# L2Gen suite: loads share/olci/<s3a|s3b>/msl12_defaults_CYAN.par, i.e. the CyAN
+# vicarious gains (NOAA-adjusted Oa10/681 nm and Oa11/709 nm) and the CyAN gas
+# transmittance table (water-vapour correction). gas_opt is no longer forced, so
+# the OLCI default (431, table-based, includes H2O) applies.
+L2GEN_SUITE = "CYAN"
+
+# Extra L2Gen products needed by the HABS cloud test. rhos_443 is required;
+# cloud_albedo is optional (rhos_865 is used where it is unavailable).
+HABS_CLOUD_L2_PRODUCTS = ("rhos_443", "cloud_albedo")
+
+# Cloud mask used for exclusion: "HABS" = OCSSW get_cloudmask_meris (turbidity-
+# corrected albedo > 0.08 with scum/glint tests, as used for NASA CyAN CI);
+# "CLDICE" = generic l2gen rhos865/cloud_albedo > 0.027 flag. CLDICE is always
+# kept in cldice_mask as a diagnostic.
+CLOUD_MASK_METHOD = "HABS"
+HABS_CLOUD_THRESHOLD = 0.08
+
+# The CLDICE bloom-rescue heuristic is superseded by the HABS scum exceptions.
+BLOOM_RESCUE_ENABLED = False

@@ -3,7 +3,7 @@
 import argparse, csv, hashlib, io, json, time, zipfile
 from cyanotrend.common import Workspace, file_lock
 from cyanotrend.ledger import Ledger
-from cyanotrend.schema import COLUMNS
+from cyanotrend.schema import COLUMNS, COMPARISON_COLUMNS
 from cyanotrend.worker import candidate_path
 
 p = argparse.ArgumentParser()
@@ -25,7 +25,15 @@ with file_lock(ws.output / ".scene-locks" / f"{a.scene_id}.lock"):
     w = csv.DictWriter(b, fieldnames=COLUMNS)
     w.writeheader()
     w.writerow({"scene_id": a.scene_id, "Hylak_id": 1})
-    content = {f"S3_OLCI_{a.scene_id}_ALL_SCIENCE_300m_CF.nc": b"fixture", f"S3_OLCI_{a.scene_id}_ALL_INDEX_STATS.csv": b.getvalue().encode()}
+    c = io.StringIO()
+    cw = csv.DictWriter(c, fieldnames=COMPARISON_COLUMNS)
+    cw.writeheader()
+    cw.writerow({"scene_id": a.scene_id, "Hylak_id": 1, "NASA_CYAN_coverage_status": "unavailable"})
+    content = {
+        f"S3_OLCI_{a.scene_id}_ALL_SCIENCE_300m_CF.nc": b"fixture",
+        f"S3_OLCI_{a.scene_id}_ALL_INDEX_STATS.csv": b.getvalue().encode(),
+        f"S3_OLCI_{a.scene_id}_NASA_CYAN_COMPARISON.csv": c.getvalue().encode(),
+    }
     meta = {
         "scene": scene,
         "reference_id": "ref",

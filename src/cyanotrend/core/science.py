@@ -167,3 +167,77 @@ def additional_olci_indices(
         "FAI": fai,
         "FAI_valid": fai_valid,
     }
+
+
+def habs_cloud_mask(
+    rhos: dict[int, np.ndarray],
+    cloud_albedo: np.ndarray | None = None,
+    valid_min: float = -np.inf,
+    valid_max: float = np.inf,
+    threshold: float = _m_settings.HABS_CLOUD_THRESHOLD,
+) -> np.ndarray:
+    """NASA OCSSW HABS cloud test for MERIS/OLCI (libl1 cloud_flag.c, get_cloudmask_meris).
+
+    Used by NASA CyAN for CI products. The turbidity signal (red bands above a
+    443-754 nm baseline) is removed from the cloud albedo before a 0.08 threshold,
+    then scum/bloom pixels with a green peak are un-flagged, very bright red
+    targets are re-flagged, and high glint is flagged. Documented in NOAA TM NOS
+    NCCOS 296 (Wynne et al. 2018/2021), Appendix B2; the rho560 > rho681 condition
+    on the scum exceptions follows the OCSSW code rather than the memo.
+
+    rhos keys: 443, 490, 560, 620, 665, 681, 709, 754, 865 (Rayleigh-corrected).
+    cloud_albedo: L2Gen cloud_albedo (glint-corrected rhos at cloud_wave); where it
+    is missing, NaN or negative, rhos_865 is used, as in OCSSW.
+    valid_min/valid_max: rhos valid range (product.xml validMin/validMax).
+    """
+    r = {w: np.asarray(rhos[w], dtype=np.float32) for w in
+         (443, 490, 560, 620, 665, 681, 709, 754, 865)}
+    shape = r[865].shape
+    ca = (np.full(shape, np.nan, np.float32) if cloud_albedo is None
+          else np.asarray(cloud_albedo, dtype=np.float32))
+    le = {w: r[w] <= valid_max for w in r}
+    with np.errstate(invalid="ignore", divide="ignore"):
+        # OCSSW only evaluates pixels whose visible/red-edge rhos are non-negative.
+        evaluated = np.ones(shape, dtype=bool)
+        for w in (443, 560, 620, 665, 681, 709, 754):
+            evaluated &= r[w] >= 0.0
+        # Turbidity signal in water.
+        turb_ok = le[443] & le[665] & le[620] & le[681] & le[754]
+        ftemp = (r[620] + r[665] + r[681]) - 3.0 * r[443] - (r[754] - r[443]) / (
+            754.0 - 443.0
+        ) * (620.0 + 665.0 + 681.0 - 3.0 * 443.0)
+        ftemp = np.where(turb_ok, ftemp, 0.0)
+        # Switch to rhos_865 where cloud_albedo fails, then remove turbidity.
+        cld = np.where(ca >= 0.0, ca, r[865])
+        cld = np.where(ftemp > 0.0, cld - 3.0 * ftemp, cld)
+        cloud = cld > float(threshold)
+        # Scum: NIR/red-edge bright relative to blue or red, with a green peak.
+        green_peak = r[560] > r[681]
+        scum_ok = le[754] & le[709] & le[681] & le[560]
+        edge_nir = r[754] + r[709]
+        excess = edge_nir - (r[665] + r[681])
+        cloud &= ~(scum_ok & le[443] & le[490]
+                   & (edge_nir > r[443] + r[490]) & (cld < 0.1) & green_peak)
+        cloud &= ~(scum_ok & le[665] & (excess > 0.01) & (cld < 0.15) & green_peak)
+        cloud &= ~(scum_ok & le[665] & (excess / cld > 0.1) & green_peak)
+        # Very bright in the red is cloud regardless.
+        cloud |= le[665] & (r[665] > 0.1) & (cld > 0.15)
+        # High glint, or rhos_865 outside its valid range.
+        in_range = (r[865] >= valid_min) & (r[865] <= valid_max)
+        cloud |= in_range & ((r[865] - ca) > 0.25)
+        cloud |= ~in_range
+    return cloud & evaluated
+
+
+def physical_valid_range(variable: netCDF4.Variable) -> tuple[float, float]:
+    """valid_min/valid_max of an L2 variable in physical units (unpacked)."""
+    def unpack(value):
+        scale = float(getattr(variable, "scale_factor", 1.0))
+        offset = float(getattr(variable, "add_offset", 0.0))
+        return float(np.asarray(value).ravel()[0]) * scale + offset
+    vmin = unpack(variable.valid_min) if hasattr(variable, "valid_min") else -np.inf
+    vmax = unpack(variable.valid_max) if hasattr(variable, "valid_max") else np.inf
+    if hasattr(variable, "valid_range"):
+        lo, hi = np.asarray(variable.valid_range).ravel()[:2]
+        vmin, vmax = unpack(lo), unpack(hi)
+    return (vmin, vmax)

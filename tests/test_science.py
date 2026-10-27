@@ -101,8 +101,11 @@ class Science(unittest.TestCase):
         )
         with netCDF4.Dataset(p) as ds:
             self.assertEqual(list(ds.dimensions), ["obs"])
-            self.assertEqual(ds["valid_water_mask"][:6].tolist(), [1, 1, 0, 0, 0, 0])
-            self.assertEqual(ds["bloom_rescue_mask"][:6].tolist(), [0, 1, 0, 0, 0, 0])
+            # No rhos_443 in this synthetic L2, so the CLDICE fallback is used and the
+            # (now disabled) bloom rescue restores nothing.
+            self.assertTrue(ds.cloud_mask_method.startswith("CLDICE"))
+            self.assertEqual(ds["valid_water_mask"][:6].tolist(), [1, 0, 0, 0, 0, 0])
+            self.assertEqual(ds["bloom_rescue_mask"][:6].tolist(), [0, 0, 0, 0, 0, 0])
             self.assertEqual(
                 ds["cyan_strict_valid_mask"][:6].tolist(), [1, 0, 0, 0, 0, 0]
             )
@@ -114,7 +117,29 @@ class Science(unittest.TestCase):
         self.assertEqual(len(table.columns), 42)  # Original per-window compact_stats remains intact.
         self.assertEqual(set(table.Hylak_id), {1, 2})
         self.assertEqual(table.native_polygon_pixels.sum(), 12)
-        self.assertEqual(table.bloom_rescued_pixels.sum(), 1)
+        self.assertEqual(table.bloom_rescued_pixels.sum(), 0)
+
+    def test_habs_cloud_mask_keeps_cldice_water_with_rhos443(self):
+        import netCDF4
+        import numpy as np
+        from cyanotrend.core import compact
+
+        with netCDF4.Dataset(self.l2, "a") as ds:
+            geo = ds.groups["geophysical_data"]
+            geo.createVariable("rhos_443", "f4", ("rows", "cols"), fill_value=-32767)[:] = np.full(
+                (2, 6), 0.01, np.float32
+            )
+        p, _ = compact.extract_lake_only_netcdf(
+            self.l2, self.scene, self.lakes, self.root / "habs.nc", config_hash="ref"
+        )
+        with netCDF4.Dataset(p) as ds:
+            self.assertTrue(ds.cloud_mask_method.startswith("HABS"))
+            # Pixels 1-2 carry CLDICE (rhos865/cloud_albedo > 0.027 test) but are water
+            # by the turbidity-corrected HABS test, so they are retained.
+            self.assertEqual(ds["cldice_mask"][:6].tolist(), [0, 1, 1, 0, 0, 0])
+            self.assertEqual(ds["cloud_excluded_mask"][:6].tolist(), [0, 0, 0, 0, 0, 0])
+            self.assertEqual(ds["valid_water_mask"][:6].tolist(), [1, 1, 1, 0, 0, 0])
+            self.assertEqual(ds["cyan_strict_valid_mask"][:6].tolist(), [1, 1, 1, 0, 0, 0])
 
     def test_state_attributes_preserve_hydrolakes_coordinates(self):
         import geopandas as gpd
@@ -175,12 +200,21 @@ class Science(unittest.TestCase):
         table["longitude"] = [-85.005, -84.995]
         ws = Workspace.create(self.root / "out", self.root / "refs", self.root / "scratch", self.root / "ocssw")
         ws.ensure()
-        archive = build_bundle(ws, self.scene, "ref", Path(raster), table, {})
+        # NASA CyAN enrichment is network-bound; use the "unavailable" form here.
+        from cyanotrend.schema import COMPARISON_COLUMNS, COMPARISON_LOCAL_COLUMNS, NASA_DETECTION_COLUMN
+        table[NASA_DETECTION_COLUMN] = ""
+        table = table[COLUMNS]
+        comparison = table[COMPARISON_LOCAL_COLUMNS].copy()
+        for column in COMPARISON_COLUMNS[len(COMPARISON_LOCAL_COLUMNS):]:
+            comparison[column] = ""
+        comparison["NASA_CYAN_coverage_status"] = "unavailable"
+        archive = build_bundle(ws, self.scene, "ref", Path(raster), table, {}, comparison)
         meta, rows = validate_archive(archive, self.scene["id"], "ref")
         self.assertEqual(list(rows[0]), COLUMNS)
-        self.assertEqual(len(COLUMNS), 50)
+        self.assertEqual(len(COLUMNS), 51)  # 46 notebook + NASA count + 4 lake attributes
         with zipfile.ZipFile(archive) as z:
-            self.assertEqual(len(z.namelist()), 3)
+            self.assertEqual(len(z.namelist()), 4)
+            self.assertTrue(any(n.endswith("_NASA_CYAN_COMPARISON.csv") for n in z.namelist()))
             self.assertTrue(any(n.endswith("_ALL_INDEX_STATS.csv") for n in z.namelist()))
 
 

@@ -5,6 +5,10 @@ from .settings import (
     ADDITIONAL_INDEX_NAMES,
     BLOOM_AWARE_HARD_FLAGS,
     BLOOM_RESCUE_AFAI_MIN,
+    BLOOM_RESCUE_ENABLED,
+    CLOUD_MASK_METHOD,
+    HABS_CLOUD_THRESHOLD,
+    L2GEN_SUITE,
     BLOOM_RESCUE_REQUIRE_CI_CYANO,
     BLOOM_RESCUE_REQUIRE_NIR_OVER_BLUE,
     BLOOM_RESCUE_REQUIRE_POSITIVE_AFAI,
@@ -51,5 +55,11 @@ def processing_config_hash(min_area_km2: float, region: str = "WORLD") -> str:
         "min_lake_area_km2": float(min_area_km2),
         "region": str(region).upper(),
         "schema": V264_SCHEMA,
+        # NASA CyAN parity: radiometry (suite, gas) and cloud mask change outputs.
+        "l2gen_suite": L2GEN_SUITE,
+        "l2gen_gas_opt": "default",
+        "cloud_mask_method": str(CLOUD_MASK_METHOD).upper(),
+        "habs_cloud_threshold": float(HABS_CLOUD_THRESHOLD),
+        "bloom_rescue_enabled": bool(BLOOM_RESCUE_ENABLED),
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]

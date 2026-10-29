@@ -20,7 +20,10 @@ SAVE_FULL_REFLECTANCE_SPECTRA = False
 
 COMPUTE_SHA256 = False
 
-CI_DETECTION_LIMIT = 0.0
+# Lowest reportable NASA CyAN CIcyano: DN 1 of the published conversion
+# CIcyano = 10**(DN * 0.011714 - 4.1870866) (CyAN V6 release notes, 2025);
+# DN 0 = "below threshold CIcyano detection limits". 10**(0.011714-4.1870866) = 6.68e-5.
+CI_DETECTION_LIMIT = 10 ** (0.011714 - 4.1870866)
 
 DEFAULT_MASK_PROFILE = "bloom_aware_cyan"
 
@@ -147,3 +150,14 @@ HABS_CLOUD_THRESHOLD = 0.08
 
 # The CLDICE bloom-rescue heuristic is superseded by the HABS scum exceptions.
 BLOOM_RESCUE_ENABLED = False
+
+# CI false-positive corrections, as published in NOAA TM NOS NCCOS 296
+# (Wynne et al. 2018/2021, doi:10.25923/606t-m243):
+#  - Clear-water correction (Section 3.1 and Appendix C2): CI set to non-detect
+#    where kd < 0.31 and kd > 0, rho865 is not above rho490/665/709, and the
+#    560 nm peak ss560 < 0.01.
+#  - Adjacency flag (Section 3.1 and Appendix B2): CI > 0 but MCI < 0 is a
+#    false positive from adjacency effects; the pixel is invalid for CI.
+CI_CLEAR_WATER_CORRECTION = True
+CI_CLEAR_WATER_KD_MAX = 0.31
+CI_ADJACENCY_FLAG = True

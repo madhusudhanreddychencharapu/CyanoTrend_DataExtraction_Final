@@ -36,10 +36,11 @@ def test_deviations_from_notebook_are_documented():
 def test_configuration_hash():
     from cyanotrend.core.configuration import processing_config_hash
     # '58f41b2c1318eaf1' is the user's original Colab configuration (CLDICE mask,
-    # gas_opt=15). The NASA CyAN V6 parity settings must hash differently so
+    # gas_opt=15). The NASA CyAN parity settings (suite, HABS cloud mask, NOAA
+    # clear-water correction and adjacency flag) must hash differently so
     # compact files from the old configuration are never reused.
     colab = '58f41b2c1318eaf1'
     current = processing_config_hash(1.3, 'USA')
-    assert current == 'bc18dd52cb01dcd4'
+    assert current == 'c516ccf788c0795a'
     assert current != colab
     assert processing_config_hash(1.3, 'WORLD') != current

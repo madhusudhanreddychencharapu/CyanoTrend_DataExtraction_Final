@@ -295,10 +295,10 @@ def run_l2gen(
         / f"{name}_L2GEN_{suffix}_{scope_tag}_{spectrum_tag}{suite_tag}.nc"
     )
     products, required = l2_products(mode, full_spectrum)
-    # Inputs for the HABS cloud test (science.habs_cloud_mask): rhos_443 is
-    # required, cloud_albedo optional (falls back to rhos_865).
+    # Inputs for the HABS cloud test and the CI clear-water correction: rhos_443
+    # is required, cloud_albedo optional (cloud test falls back to rhos_865).
     products = list(dict.fromkeys(products + list(_m_settings.HABS_CLOUD_L2_PRODUCTS)))
-    if _m_settings.CLOUD_MASK_METHOD.upper() == "HABS":
+    if _m_settings.CLOUD_MASK_METHOD.upper() == "HABS" or _m_settings.CI_CLEAR_WATER_CORRECTION:
         required = set(required) | {"rhos_443"}
     if output.exists():
         try:

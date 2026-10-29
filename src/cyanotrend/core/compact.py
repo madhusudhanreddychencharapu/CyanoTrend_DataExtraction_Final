@@ -151,8 +151,13 @@ def extract_lake_only_netcdf(l2_path: Path, scene: dict[str, Any], lakes: gpd.Ge
         else:
             cloud_mask_method = 'CLDICE (l2gen generic flag)'
         bloom_rescue_enabled = bool(_m_settings.BLOOM_RESCUE_ENABLED)
+        use_clear_water = bool(_m_settings.CI_CLEAR_WATER_CORRECTION) and rhos443_name is not None
+        use_adjacency = bool(_m_settings.CI_ADJACENCY_FLAG)
+        if _m_settings.CI_CLEAR_WATER_CORRECTION and not use_clear_water:
+            print(f'WARNING: {Path(l2_path).name} has no rhos_443; CI clear-water correction skipped.')
+        ci_corrections = ', '.join([x for x, on in (('clear-water correction kd<' + str(_m_settings.CI_CLEAR_WATER_KD_MAX), use_clear_water), ('adjacency flag (CI>0 & MCI<0)', use_adjacency)) if on]) or 'none'
         cloud_flag_label = 'HABS_CLOUD' if use_habs else 'CLDICE'
-        metadata = {'Conventions': 'CF-1.8 ACDD-1.3', 'title': 'Sentinel-3 OLCI derived lake-pixel point collection', 'schema': _m_settings.V264_SCHEMA, 'processing_config_hash': str(config_hash or ''), 'scene_id': str(scene.get('id', '')), 'scene_name': str(scene.get('name', '')), 'acquisition_start': str(scene.get('start', '')), 'acquisition_end': str(scene.get('end', '')), 'window_id': window_id(window), 'window_bbox': 'FULL' if window is None else ','.join(map(str, window)), 'source_l2': str(Path(l2_path).name), 'l2gen_version': _m_runtime.command_version(_m_settings.L2GEN_BIN), 'primary_qa_profile': _m_settings.DEFAULT_MASK_PROFILE, 'primary_hard_exclude_flags': ','.join(_m_settings.BLOOM_AWARE_HARD_FLAGS), 'cyan_strict_exclude_flags': f'LAND,{cloud_flag_label},HISATZEN,NAVFAIL_safety', 'cloud_mask_method': cloud_mask_method, 'cloud_mask_definition': 'cloud = (cloud_albedo, or rhos865 where invalid) - 3*max(0, (rhos620+rhos665+rhos681) - 3*rhos443 - (rhos754-rhos443)/(754-443)*(620+665+681-3*443)) > 0.08; un-flagged for scum when rhos560>rhos681 and NIR/red-edge exceeds blue or red; re-flagged when rhos665>0.1 and albedo>0.15; high glint (rhos865-cloud_albedo>0.25) flagged' if use_habs else 'l2gen CLDICE: cloud_albedo(865) > 0.027', 'cloud_mask_reference': 'NASA OCSSW libl1 cloud_flag.c get_cloudmask_meris; NOAA TM NOS NCCOS 296 Appendix B2 (doi:10.25923/606t-m243)', 'cldice_mask_semantics': 'generic l2gen CLDICE flag, diagnostic only' if use_habs else 'generic l2gen CLDICE flag, used for exclusion', 'conditional_cldice_bloom_recovery': int(bloom_rescue_enabled), 'bloom_rescue_definition': ('cloud AND NOT HISATZEN AND NOT NAVFAIL AND standard CIcyano spectral detection AND OLCI AFAI>0 AND rhos754>rhos490' if bloom_rescue_enabled else 'disabled: superseded by the HABS scum exceptions'), 'bloom_rescue_method_note': 'Conservative research implementation informed by the false-cloud recovery concept of Wang & Jiang 2025 (DOI 10.1016/j.jag.2025.104408); not an exact reproduction of NOAA MSL12 nAFAI/reflectance-ratio thresholds.', 'l2_flag_map_json': json.dumps({k: int(v) for k, v in flag_map.items()}, sort_keys=True), 'require_l2_nonland': 1, 'shore_buffer_m': float(shore_buffer_m), 'ci_detection_limit': float(detection_limit), 'ss681_max': float(ss681_max), 'ss665_min': float(ss665_min), 'non_lake_storage': 'omitted entirely; not dense NaN cells', 'masked_value_semantics': '_FillValue decodes as NaN', 'true_color_bands': 'rhos665,rhos560,rhos490', 'additional_indices': 'MPH, OLCI-adapted FAI/AFAI', 'l2gen_nominal_band_mapping': 'nominal 885 nm -> L2Gen rhos_884'}
+        metadata = {'Conventions': 'CF-1.8 ACDD-1.3', 'title': 'Sentinel-3 OLCI derived lake-pixel point collection', 'schema': _m_settings.V264_SCHEMA, 'processing_config_hash': str(config_hash or ''), 'scene_id': str(scene.get('id', '')), 'scene_name': str(scene.get('name', '')), 'acquisition_start': str(scene.get('start', '')), 'acquisition_end': str(scene.get('end', '')), 'window_id': window_id(window), 'window_bbox': 'FULL' if window is None else ','.join(map(str, window)), 'source_l2': str(Path(l2_path).name), 'l2gen_version': _m_runtime.command_version(_m_settings.L2GEN_BIN), 'primary_qa_profile': _m_settings.DEFAULT_MASK_PROFILE, 'primary_hard_exclude_flags': ','.join(_m_settings.BLOOM_AWARE_HARD_FLAGS), 'cyan_strict_exclude_flags': f'LAND,{cloud_flag_label},HISATZEN,NAVFAIL_safety', 'cloud_mask_method': cloud_mask_method, 'cloud_mask_definition': 'cloud = (cloud_albedo, or rhos865 where invalid) - 3*max(0, (rhos620+rhos665+rhos681) - 3*rhos443 - (rhos754-rhos443)/(754-443)*(620+665+681-3*443)) > 0.08; un-flagged for scum when rhos560>rhos681 and NIR/red-edge exceeds blue or red; re-flagged when rhos665>0.1 and albedo>0.15; high glint (rhos865-cloud_albedo>0.25) flagged' if use_habs else 'l2gen CLDICE: cloud_albedo(865) > 0.027', 'cloud_mask_reference': 'NASA OCSSW libl1 cloud_flag.c get_cloudmask_meris; NOAA TM NOS NCCOS 296 Appendix B2 (doi:10.25923/606t-m243)', 'cldice_mask_semantics': 'generic l2gen CLDICE flag, diagnostic only' if use_habs else 'generic l2gen CLDICE flag, used for exclusion', 'conditional_cldice_bloom_recovery': int(bloom_rescue_enabled), 'bloom_rescue_definition': ('cloud AND NOT HISATZEN AND NOT NAVFAIL AND standard CIcyano spectral detection AND OLCI AFAI>0 AND rhos754>rhos490' if bloom_rescue_enabled else 'disabled: superseded by the HABS scum exceptions'), 'bloom_rescue_method_note': 'Conservative research implementation informed by the false-cloud recovery concept of Wang & Jiang 2025 (DOI 10.1016/j.jag.2025.104408); not an exact reproduction of NOAA MSL12 nAFAI/reflectance-ratio thresholds.', 'l2_flag_map_json': json.dumps({k: int(v) for k, v in flag_map.items()}, sort_keys=True), 'require_l2_nonland': 1, 'shore_buffer_m': float(shore_buffer_m), 'ci_detection_limit': float(detection_limit), 'ss681_max': float(ss681_max), 'ss665_min': float(ss665_min), 'non_lake_storage': 'omitted entirely; not dense NaN cells', 'masked_value_semantics': '_FillValue decodes as NaN', 'true_color_bands': 'rhos665,rhos560,rhos490', 'additional_indices': 'MPH, OLCI-adapted FAI/AFAI', 'l2gen_nominal_band_mapping': 'nominal 885 nm -> L2Gen rhos_884', 'ci_corrections': ci_corrections, 'ci_corrections_reference': 'NOAA TM NOS NCCOS 296 (Wynne et al. 2018/2021, doi:10.25923/606t-m243): Section 3.1, Appendix C2 (clear water), Appendix B2 (adjacency); detection limit = CyAN DN 1 (CyAN V6 release notes)', 'ci_clear_water_kd_max': float(_m_settings.CI_CLEAR_WATER_KD_MAX)}
         ds, out, tmp = _open_compact_writer_v264(output_path, metadata)
         nobs = 0
         missing_flags = [x for x in set(_m_settings.CYAN_STRICT_QA_FLAGS) if x not in flag_map]
@@ -176,9 +181,11 @@ def extract_lake_only_netcdf(l2_path: Path, scene: dict[str, Any], lakes: gpd.Ge
                 navfail = _m_science.flag_is_set(flags, flag_map, 'NAVFAIL')
                 base = inside & geolocated & ~land
                 arrays = {w: _m_science.to_float(geo.variables[rhos_names[w]][rs, :]) for w in _m_settings.GLOBAL_ANALYSIS_RHOS_WAVELENGTHS}
+                if rhos443_name is not None:
+                    arrays_443 = _m_science.to_float(geo.variables[rhos443_name][rs, :])
                 if use_habs:
                     habs_rhos = dict(arrays)
-                    habs_rhos[443] = _m_science.to_float(geo.variables[rhos443_name][rs, :])
+                    habs_rhos[443] = arrays_443
                     cldalb = _m_science.to_float(geo.variables[cloud_albedo_name][rs, :]) if cloud_albedo_name else None
                     cloud = _m_science.habs_cloud_mask(habs_rhos, cldalb, valid_min=habs_valid_min, valid_max=habs_valid_max)
                 else:
@@ -201,9 +208,19 @@ def extract_lake_only_netcdf(l2_path: Path, scene: dict[str, Any], lakes: gpd.Ge
                     valid_water &= ~bright
                     cyan_strict_valid &= ~bright
                     bloom_rescue &= ~bright
-                ci_valid = valid_water & family['finite']
-                candidate = ci_valid & family['ci_candidate']
-                detected = ci_valid & family['ci_detection']
+                if use_clear_water:
+                    clear_water = family['finite'] & _m_science.clear_water_mask({**arrays, 443: arrays_443})
+                else:
+                    clear_water = np.zeros(family['finite'].shape, dtype=bool)
+                if use_adjacency:
+                    mci = _m_science.mci_index(arrays[681], arrays[709], arrays[754])
+                    ci_adjacency = family['finite'] & _m_science.ci_adjacency_mask(family['SS_681'], clear_water, mci)
+                else:
+                    ci_adjacency = np.zeros(family['finite'].shape, dtype=bool)
+                # Adjacency = invalid for CI (no data); clear water = valid but non-detect.
+                ci_valid = valid_water & family['finite'] & ~ci_adjacency
+                candidate = ci_valid & family['ci_candidate'] & ~clear_water
+                detected = ci_valid & family['ci_detection'] & ~clear_water
                 red = _m_science.to_float(geo.variables[ndci_names[665]][rs, :])
                 edge = _m_science.to_float(geo.variables[ndci_names[709]][rs, :])
                 ndci, ndci_finite = _m_science.ndci_index(red, edge)
@@ -219,7 +236,7 @@ def extract_lake_only_netcdf(l2_path: Path, scene: dict[str, Any], lakes: gpd.Ge
                 out['source_row'][sl] = rr.astype(np.int32) + int(start)
                 out['source_col'][sl] = cc.astype(np.int32)
                 out['l2_flags'][sl] = flags[rr, cc]
-                mask_map = {'valid_water_mask': valid_water, 'cyan_strict_valid_mask': cyan_strict_valid, 'bloom_rescue_mask': bloom_rescue, 'cldice_mask': cldice, 'hisatzen_mask': hisatzen, 'navfail_mask': navfail, 'cloud_excluded_mask': cloud_excluded, 'ci_valid_mask': ci_valid, 'ci_candidate_mask': candidate, 'ci_detection_mask': detected, 'ndci_valid_mask': ndci_valid, 'mph_valid_mask': extra_valid['MPH'], 'fai_valid_mask': extra_valid['FAI']}
+                mask_map = {'valid_water_mask': valid_water, 'cyan_strict_valid_mask': cyan_strict_valid, 'bloom_rescue_mask': bloom_rescue, 'cldice_mask': cldice, 'hisatzen_mask': hisatzen, 'navfail_mask': navfail, 'cloud_excluded_mask': cloud_excluded, 'ci_valid_mask': ci_valid, 'ci_candidate_mask': candidate, 'ci_detection_mask': detected, 'ci_clear_water_mask': valid_water & clear_water, 'ci_adjacency_mask': valid_water & ci_adjacency, 'ndci_valid_mask': ndci_valid, 'mph_valid_mask': extra_valid['MPH'], 'fai_valid_mask': extra_valid['FAI']}
                 for name, mask in mask_map.items():
                     out[name][sl] = mask[rr, cc].astype(np.uint8)
                 _append_float(out['latitude'], nobs, lat[rr, cc])
@@ -312,6 +329,8 @@ def _open_compact_writer_v264(path: Path, metadata: dict[str, Any]):
         "ci_valid_mask",
         "ci_candidate_mask",
         "ci_detection_mask",
+        "ci_clear_water_mask",
+        "ci_adjacency_mask",
         "ndci_valid_mask",
         "mph_valid_mask",
         "fai_valid_mask",
@@ -360,6 +379,14 @@ def _open_compact_writer_v264(path: Path, metadata: dict[str, Any]):
     )
     out["bloom_rescue_mask"].setncattr(
         "long_name", "CLDICE pixel restored by conservative bloom spectral evidence"
+    )
+    out["ci_clear_water_mask"].setncattr(
+        "long_name",
+        "valid water whose CI is set to non-detect by the NOAA clear-water correction (TM NOS NCCOS 296 App. C2)",
+    )
+    out["ci_adjacency_mask"].setncattr(
+        "long_name",
+        "valid water invalid for CI by the NOAA adjacency flag CI>0 & MCI<0 (TM NOS NCCOS 296 App. B2)",
     )
     out["MPH"].setncatts(
         {

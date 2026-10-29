@@ -241,3 +241,55 @@ def physical_valid_range(variable: netCDF4.Variable) -> tuple[float, float]:
         lo, hi = np.asarray(variable.valid_range).ravel()[:2]
         vmin, vmax = unpack(lo), unpack(hi)
     return (vmin, vmax)
+
+
+def kd_rhos(r442, r490, r_red_a, r_red_b, r865):
+    """MERIS/OLCI Kd proxy, NOAA TM NOS NCCOS 296 Eq. 13 (uncalibrated form).
+
+    kd = 0.7 * ((r620 + r665)/2 - r865) / ((r442 + r490)/2 - r865)
+    """
+    blue = (np.asarray(r442, dtype=float) + np.asarray(r490, dtype=float)) / 2.0
+    red = (np.asarray(r_red_a, dtype=float) + np.asarray(r_red_b, dtype=float)) / 2.0
+    r865 = np.asarray(r865, dtype=float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return 0.7 * ((red - r865) / (blue - r865))
+
+
+def clear_water_mask(
+    rhos: dict[int, np.ndarray], kd_max: float = _m_settings.CI_CLEAR_WATER_KD_MAX
+) -> np.ndarray:
+    """Pixels whose CI must be set to non-detect (clear water, no algae).
+
+    NOAA TM NOS NCCOS 296, Section 3.1 ("False-positive CI's can occur in clear
+    water ... classified as non-detect") and Appendix C2 (MERIS/OLCI clear water
+    correction):
+      kd     = Eq. 13 Kd; kd_709 uses rho709 in place of rho620 and rho665 and
+               replaces kd where larger ("709 switching modification for scum")
+      ss560  = r560 - r442 + (r442 - r620) * (560 - 442) / (620 - 442)
+      clear  = kd < 0.31 & kd > 0
+               & (r865 <= r490 | r865 <= r665 | r865 <= r709) & ss560 < 0.01
+    rhos keys: 443 (OLCI Oa3, 442.5 nm), 490, 560, 620, 665, 709, 865.
+    """
+    r = {w: np.asarray(rhos[w], dtype=float) for w in (443, 490, 560, 620, 665, 709, 865)}
+    kd = kd_rhos(r[443], r[490], r[620], r[665], r[865])
+    kd_709 = kd_rhos(r[443], r[490], r[709], r[709], r[865])
+    with np.errstate(invalid="ignore"):
+        kd = np.where(kd_709 > kd, kd_709, kd)
+        ss560 = r[560] - r[443] + (r[443] - r[620]) * (560.0 - 442.0) / (620.0 - 442.0)
+        nir_not_brightest = (r[865] <= r[490]) | (r[865] <= r[665]) | (r[865] <= r[709])
+        return (kd < float(kd_max)) & (kd > 0.0) & nir_not_brightest & (ss560 < 0.01)
+
+
+def mci_index(r681, r709, r754) -> np.ndarray:
+    """Maximum Chlorophyll Index, NOAA TM NOS NCCOS 296 Eq. 9 (Gower et al. 1999):
+    height of rho709 above the 681-754 nm baseline."""
+    r681, r709, r754 = (np.asarray(a, dtype=float) for a in (r681, r709, r754))
+    return r709 - r681 - (r754 - r681) * (709.0 - 681.0) / (754.0 - 681.0)
+
+
+def ci_adjacency_mask(ss681: np.ndarray, clear_water: np.ndarray, mci: np.ndarray) -> np.ndarray:
+    """NOAA TM NOS NCCOS 296 Section 3.1 / Appendix B2 adjacency flag:
+    CI (after the clear-water correction) > 0 while MCI < 0."""
+    with np.errstate(invalid="ignore"):
+        ci = np.where(clear_water, 0.0, -np.asarray(ss681, dtype=float))
+        return (ci > 0.0) & (np.asarray(mci) < 0.0)

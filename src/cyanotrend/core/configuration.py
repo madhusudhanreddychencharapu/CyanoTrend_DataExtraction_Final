@@ -12,6 +12,9 @@ from .settings import (
     BLOOM_RESCUE_REQUIRE_CI_CYANO,
     BLOOM_RESCUE_REQUIRE_NIR_OVER_BLUE,
     BLOOM_RESCUE_REQUIRE_POSITIVE_AFAI,
+    CI_ADJACENCY_FLAG,
+    CI_CLEAR_WATER_CORRECTION,
+    CI_CLEAR_WATER_KD_MAX,
     CI_DETECTION_LIMIT,
     CYAN_STRICT_QA_FLAGS,
     DEFAULT_BRIGHT_SCREEN,
@@ -61,5 +64,8 @@ def processing_config_hash(min_area_km2: float, region: str = "WORLD") -> str:
         "cloud_mask_method": str(CLOUD_MASK_METHOD).upper(),
         "habs_cloud_threshold": float(HABS_CLOUD_THRESHOLD),
         "bloom_rescue_enabled": bool(BLOOM_RESCUE_ENABLED),
+        "ci_clear_water_correction": bool(CI_CLEAR_WATER_CORRECTION),
+        "ci_clear_water_kd_max": float(CI_CLEAR_WATER_KD_MAX),
+        "ci_adjacency_flag": bool(CI_ADJACENCY_FLAG),
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]

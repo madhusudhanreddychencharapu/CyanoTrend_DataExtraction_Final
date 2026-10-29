@@ -18,7 +18,7 @@ from .science import to_float
 from .hydrolakes import erode_lake_geometries
 from .settings import GLOBAL_ANALYSIS_RHOS_WAVELENGTHS, DEFAULT_SHORE_BUFFER_M
 
-CYAN_CI_DETECTION_LIMIT = 0.0
+from .settings import CI_DETECTION_LIMIT as CYAN_CI_DETECTION_LIMIT
 SCIENCE_EXPORT_DEFAULT_RESOLUTION_M = 300
 SCALAR_METRICS = ["CI", "CI_cyano", "NDCI", "MPH", "FAI"] + [f"rhos_{w}" for w in GLOBAL_ANALYSIS_RHOS_WAVELENGTHS]
 SCIENCE_EXPORT_VARIABLES = [f"rhos_{w}" for w in GLOBAL_ANALYSIS_RHOS_WAVELENGTHS] + ["CI", "CI_cyano", "NDCI", "MPH", "FAI"]

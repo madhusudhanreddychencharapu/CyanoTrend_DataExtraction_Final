@@ -141,6 +141,34 @@ class Science(unittest.TestCase):
             self.assertEqual(ds["valid_water_mask"][:6].tolist(), [1, 1, 1, 0, 0, 0])
             self.assertEqual(ds["cyan_strict_valid_mask"][:6].tolist(), [1, 1, 1, 0, 0, 0])
 
+    def test_clear_water_pixels_become_non_detect_but_stay_valid(self):
+        import netCDF4
+        import numpy as np
+        from cyanotrend.core import compact
+
+        # Make every pixel a clear-lake spectrum (kd < 0.31, no green peak) that still
+        # has a small positive CI, as over the Great Lakes.
+        clear = {443: 0.030, 490: 0.028, 560: 0.020, 620: 0.006, 665: 0.005,
+                 681: 0.004, 709: 0.0042, 754: 0.003, 865: 0.002, 884: 0.001}
+        with netCDF4.Dataset(self.l2, "a") as ds:
+            geo = ds.groups["geophysical_data"]
+            geo["l2_flags"][:] = 0
+            for w, v in clear.items():
+                if f"rhos_{w}" not in geo.variables:
+                    geo.createVariable(f"rhos_{w}", "f4", ("rows", "cols"), fill_value=-32767)
+                geo[f"rhos_{w}"][:] = np.full((2, 6), v, np.float32)
+        p, _ = compact.extract_lake_only_netcdf(
+            self.l2, self.scene, self.lakes, self.root / "clear.nc", config_hash="ref"
+        )
+        with netCDF4.Dataset(p) as ds:
+            n = len(ds.dimensions["obs"])
+            # CI before correction = -(0.004-0.005-(0.0042-0.005)*16/44) = 0.00071 > detection limit
+            self.assertEqual(int(ds["valid_water_mask"][:].sum()), n)
+            self.assertEqual(int(ds["ci_valid_mask"][:].sum()), n)
+            self.assertEqual(int(ds["ci_clear_water_mask"][:].sum()), n)
+            self.assertEqual(int(ds["ci_detection_mask"][:].sum()), 0)
+            self.assertIn("clear-water", ds.ci_corrections)
+
     def test_state_attributes_preserve_hydrolakes_coordinates(self):
         import geopandas as gpd
         from shapely.geometry import box

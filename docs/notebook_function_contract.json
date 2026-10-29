@@ -53,25 +53,27 @@
     "function": "extract_lake_only_netcdf",
     "notebook_cell": 57,
     "normalized_ast_equal": false,
-    "sha256": "cf3fd72b9f97711d6d07081f4ec0f47c8d886a63e9b06221af9a2def343d9c97",
+    "sha256": "e53016d995b8869ebe56ff5db1760fd5b93efe47dff85c775c0800dd39ae0e12",
     "notebook_sha256": "0268d263aea5582de010cb10077f22b119a7aad0ce5db26fcdeca9acb1e20a03",
-    "deviation": "Intentional deviation from the notebook for NASA CyAN V6 parity: HABS cloud mask (OCSSW get_cloudmask_meris) replaces CLDICE exclusion and bloom rescue; L2Gen suite=CYAN with default gas_opt."
+    "deviation": "Intentional deviation from the notebook for NASA CyAN parity: HABS cloud mask (OCSSW get_cloudmask_meris) replaces CLDICE exclusion and bloom rescue; L2Gen suite=CYAN with default gas_opt; NOAA TM NOS NCCOS 296 clear-water correction (kd<0.31) and adjacency flag (CI>0 & MCI<0); detection limit = CyAN DN 1 (6.68e-5)."
   },
   {
     "module": "compact",
     "function": "_open_compact_writer_v264",
     "notebook_cell": 57,
-    "normalized_ast_equal": true,
-    "sha256": "fbd211da108bca603eba2c787de18c90c63a186db3d6434ab13e673bc9909a9b"
+    "normalized_ast_equal": false,
+    "sha256": "c708ba099639194e686e47dd407da3314693ef44eb761a3da9f77ae70609025d",
+    "notebook_sha256": "fbd211da108bca603eba2c787de18c90c63a186db3d6434ab13e673bc9909a9b",
+    "deviation": "Intentional deviation from the notebook for NASA CyAN parity: HABS cloud mask (OCSSW get_cloudmask_meris) replaces CLDICE exclusion and bloom rescue; L2Gen suite=CYAN with default gas_opt; NOAA TM NOS NCCOS 296 clear-water correction (kd<0.31) and adjacency flag (CI>0 & MCI<0); detection limit = CyAN DN 1 (6.68e-5)."
   },
   {
     "module": "configuration",
     "function": "processing_config_hash",
     "notebook_cell": 57,
     "normalized_ast_equal": false,
-    "sha256": "ab465af212e7f947b7b32adbfe2ece7281afa52bac3330dacd41845b30c444fb",
+    "sha256": "c59e4c1675022646546f3f2937e0eac9197581a9c52ac7b8e16694850a348be5",
     "notebook_sha256": "86f64c874127071e52075f43d12504f7438335c644c4a507719d7ed830b68bf9",
-    "deviation": "Intentional deviation from the notebook for NASA CyAN V6 parity: HABS cloud mask (OCSSW get_cloudmask_meris) replaces CLDICE exclusion and bloom rescue; L2Gen suite=CYAN with default gas_opt."
+    "deviation": "Intentional deviation from the notebook for NASA CyAN parity: HABS cloud mask (OCSSW get_cloudmask_meris) replaces CLDICE exclusion and bloom rescue; L2Gen suite=CYAN with default gas_opt; NOAA TM NOS NCCOS 296 clear-water correction (kd<0.31) and adjacency flag (CI>0 & MCI<0); detection limit = CyAN DN 1 (6.68e-5)."
   },
   {
     "module": "exports",

@@ -23,9 +23,23 @@ def date_chunks(start, end):
         first = stop + timedelta(days=1)
 
 
-def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=None, lake_region="WORLD"):
+SCENE_RULES = ("lake-complete", "state")
+
+
+def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=None, lake_region="WORLD",
+                scene_rule="lake-complete"):
+    """Queue every scene of the date range that the region's lakes need.
+
+    scene_rule "lake-complete": a scene is planned when it touches any lake that
+    touches the region, even if the scene itself lies outside the region. All
+    scenes on a lake's daily checklist are then planned by the same run.
+    scene_rule "state": the notebook rule; the scene must also intersect the region.
+    """
     from .core.catalogue import search_olci_l1_catalog, candidate_lakes_for_scene, scene_geometry
     from shapely import union_all
+
+    if scene_rule not in SCENE_RULES:
+        raise ValueError(f"scene_rule must be one of {', '.join(SCENE_RULES)}")
 
     workspace.ensure()
     m = references.manifest(workspace)
@@ -50,7 +64,13 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
             raise ValueError("Country/state not found; inspect regions first")
         geom = union_all(chosen.geometry)
         pool = lakes[lakes.intersects(geom)].copy()
-        bbox = tuple(float(x) for x in geom.bounds)
+        bounds = list(geom.bounds)
+        if scene_rule == "lake-complete" and not pool.empty:
+            # Search wide enough to find scenes over the outside parts of border lakes.
+            lake_bounds = pool.total_bounds
+            bounds = [min(bounds[0], lake_bounds[0]), min(bounds[1], lake_bounds[1]),
+                      max(bounds[2], lake_bounds[2]), max(bounds[3], lake_bounds[3])]
+        bbox = tuple(float(x) for x in bounds)
     if pool.empty:
         raise ValueError("No eligible lakes in selected region")
     scenes = {}
@@ -63,7 +83,7 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
             if scene["id"] in scenes:
                 continue
             sg = scene_geometry(scene)
-            if geom is not None and (sg is None or not sg.intersects(geom)):
+            if geom is not None and scene_rule == "state" and (sg is None or not sg.intersects(geom)):
                 continue
             subset = candidate_lakes_for_scene(scene, pool)
             if subset.empty:
@@ -92,6 +112,7 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
         "max_scenes": max_scenes,
         "lake_region": lake_region,
         "lake_region_source_sha256": usa_checksum,
+        "scene_rule": scene_rule,
     }
     payload = {
         "schema": "cyanotrend-plan-1",

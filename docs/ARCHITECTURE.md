@@ -27,9 +27,15 @@ reference/output workspace; automatic data refresh is intentionally absent.
 ## 2. Plans — `planning.py`
 
 An inclusive custom date range is searched with the notebook catalogue cap. Country
-and state polygons select eligible planning lakes, and scene footprints must
-intersect the selected administrative geometry AND those lakes. Only S3A and S3B OLCI EFR products are accepted. The saved
-plan retains discovery evidence and selection parameters so the queue can resume.
+and state polygons select eligible planning lakes. With the default
+`--scene-rule lake-complete`, a scene is planned when its footprint touches any of
+those lakes, even where the scene lies outside the region (for example a scene
+seeing only the Wisconsin side of Lake Michigan during a Michigan plan), so every
+scene on a lake's daily checklist is planned by the same run. `--scene-rule state`
+keeps the notebook rule: the footprint must intersect the administrative geometry
+AND those lakes. Only S3A and S3B OLCI EFR products are accepted. The saved
+plan retains discovery evidence and selection parameters (including `scene_rule`)
+so the queue can resume.
 
 A processing worker receives all eligible lakes in the loaded WORLD/USA universe intersecting the scene,
 not just lakes inside the requesting administrative region. This is the notebook's
@@ -110,9 +116,39 @@ MiB/s are exposed. The staging interval includes transfer/setup/extraction; it i
 not a bandwidth benchmark. Per-attempt telemetry remains available after scratch
 cleanup. Discovery counts cover saved plans, not undiscovered worldwide inventory.
 
+## 8. Day stage — `daily/`, `cyanotrend daily`
+
+Scene processing stays independent per scene. The day stage merges processed
+scenes per UTC date and lake, the way NASA CyAN builds its daily product.
+
+*NASA grid file per scene* (`daily/grid.py`). After packaging, the worker places
+the scene's native lake pixels on NASA CyAN's CONUS grid and writes
+`<scene>_<hash>_nasa_grid.nc` beside the ZIP and native folder. The lattice is
+NASA's: EPSG:5070, 300 m cells, edges taken from NASA tile 7_5
+(upper-left 1,034,402.95 m, 914,826.27 m). Each pixel is spread over its footprint
+(spanned by its neighbouring pixels); a cell stores the area-weighted mean of
+overlapping valid pixels (CyAN's area-weighted interpolation, Urquhart & Schaeffer
+2019) and the nearest overlapping pixel. The file is not inside the ZIP, so
+archive checksums are unchanged; `daily` builds it for older scenes from their
+native folder.
+
+*Daily merge* (`daily/merge.py`). For each date: the catalogue gives every S3A/S3B
+scene; a lake's checklist is the scenes touching it (NR/NT versions of one
+acquisition count once). The ledger ticks the list. Complete lakes are merged;
+lakes whose missing scenes all failed permanently are merged and flagged
+`partial`; lakes still waiting get no row and are listed in the manifest. A lake's
+cells are the NASA cells whose centres lie inside its polygon (the NASA count
+rule); each cell keeps the highest valid CI_cyano over the lake's scenes and is
+"no valid data" only when no scene saw it validly. Outputs per date, rebuilt on
+every run: `<output>/daily/USA/<year>/<month>/<date>/daily_lakes.csv` (one row per
+lake, all states it touches), `day_manifest.json` (checklist, waiting lakes,
+warnings) and `daily_grid.nc` (merged cells, NASA DN scale). The stage only reads
+saved files; it never processes or queues scenes.
+
 ## Storage boundary
 
-Only final science ZIPs, master/backup, saved plans, reference data and operational
+Only final science ZIPs, native lake-pixel folders, per-scene NASA grid files,
+daily outputs, master/backup, saved plans, reference data and operational
 records persist. No HTML, gridded map export, raw satellite archive, full L2 file,
 per-scene boundaries or `target_hydrolakes.gpkg` is retained after successful
 publication. Pending products survive publication failure to permit recovery.

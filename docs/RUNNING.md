@@ -234,6 +234,34 @@ not successful validation of those tests.
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
+`tests/test_daily.py` and `tests/test_notebook_planning.py` use pytest:
+
+```bash
+PYTHONPATH=src python -m pytest -q
+```
+
+## 9. Merge scenes per day (S3A/S3B daily maximum)
+
+`daily` merges processed scenes per UTC date and lake on NASA CyAN's 300 m grid.
+Run it after any `run`. It only reads saved results, so it is safe to repeat.
+
+```bash
+cyanotrend --output "Output Data Notebook Parity" plan --start 2024-08-14 --end 2024-08-14 --country USA --state-id MICHIGAN_ID_FROM_REGIONS
+cyanotrend --output "Output Data Notebook Parity" run --once
+cyanotrend --output "Output Data Notebook Parity" daily --start 2024-08-14 --end 2024-08-14
+```
+
+Lakes whose scenes are all processed get a row in
+`daily/USA/2024/08/2024-08-14/daily_lakes.csv`. A lake still missing a scene (for
+example one first planned by a neighbouring state) is listed under
+`waiting_lakes` in `day_manifest.json` with the missing scene names. Plan and run
+that state, then run `daily` again for the same dates: the date's files are
+rebuilt and the lake gets its row. `--method nearest` switches the within-scene
+pixel combination from area-weighted mean (default) to nearest pixel.
+
+`daily` needs the catalogue (network) to build each date's checklist. Plans made
+with `--max-scenes` can leave lakes waiting; the manifest warns about them.
+
 See `SCIENCE_PARITY.md` for the same-scene HPC comparison before production scaling.
 The original notebook and real reference outputs remain your comparison material;
 no notebook runtime is needed by this package.

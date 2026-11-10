@@ -187,6 +187,13 @@ def process(workspace, sid, attempt):
                         "timings": ledger.scene(sid)["timings"],
                         "attempt": attempt,
                     })
+                    # Lake pixels on NASA CyAN's CONUS 300 m grid, beside the ZIP, for the
+                    # daily merge. Not fatal: the daily step rebuilds it from the native folder.
+                    try:
+                        from .daily.grid import write_scene_grid
+                        meta["nasa_cyan_grid"] = write_scene_grid(native_dir, scene)
+                    except Exception as exc:
+                        meta["nasa_cyan_grid"] = {"status": "error", "error": redact(f"{type(exc).__name__}: {exc}")[:500]}
                     build_bundle(workspace, scene, record["reference_id"], raster, table, meta, comparison)
             ledger.update(sid, stage="ready_to_publish")
         except BaseException as e:

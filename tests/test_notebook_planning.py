@@ -9,9 +9,8 @@ from cyanotrend.planning import create_plan
 from cyanotrend.core.windows import plan_scene_windows
 
 
-def test_remote_part_of_cross_region_lake_cannot_admit_scene(tmp_path):
+def _cross_region_plan(tmp_path, scene_rule):
     # A long lake touches the requested northern region AND the southern scene.
-    # Lake intersection alone used to admit this scene despite disjoint regions.
     lakes = gpd.GeoDataFrame({"Hylak_id": [1, 2], "country_iso3": ["USA", "USA"],
         "state_id": ["north", "elsewhere"], "state_name": ["North", "Elsewhere"]},
         geometry=[box(0, 0, 1, 10), box(2, 8, 3, 9)], crs=4326)
@@ -21,11 +20,28 @@ def test_remote_part_of_cross_region_lake_cannot_admit_scene(tmp_path):
     north = {"id": str(uuid.uuid4()), "satellite": "S3B", "geofootprint": mapping(box(0, 8, 3, 10))}
     ws = Workspace.create(tmp_path/'out', tmp_path/'refs', tmp_path/'scratch', tmp_path/'ocssw')
     with patch('cyanotrend.references.manifest', return_value={"coverage":"global", "reference_id":"ref"}), patch('cyanotrend.references.load_lakes', return_value=lakes), patch('cyanotrend.references.boundaries', return_value=admin), patch('cyanotrend.core.catalogue.search_olci_l1_catalog', return_value=[south,north]) as search:
-        result = create_plan(ws, '2024-08-15', '2024-08-15', 'USA', 'north', 5)
-    plan = json.loads(open(result['plan']).read())
+        result = create_plan(ws, '2024-08-15', '2024-08-15', 'USA', 'north', 5, scene_rule=scene_rule)
+    return json.loads(open(result['plan']).read()), search, south, north
+
+
+def test_state_rule_remote_part_of_cross_region_lake_cannot_admit_scene(tmp_path):
+    # Notebook rule: lake intersection alone does not admit a scene outside the region.
+    plan, search, south, north = _cross_region_plan(tmp_path, "state")
     assert [s['id'] for s in plan['scenes']] == [north['id']]
     assert plan['scenes'][0]['candidate_lakes'] == 1  # not both whole-scene lakes
     assert search.call_args.kwargs['max_products'] == 5
+    assert search.call_args.kwargs['bbox'] == (0.0, 9.0, 1.0, 10.0)
+    assert plan['selection']['scene_rule'] == "state"
+
+
+def test_lake_complete_rule_admits_every_scene_of_a_region_lake(tmp_path):
+    # Default rule: the southern scene sees part of a lake that touches the region,
+    # so it is on that lake's daily checklist and is planned by the same run.
+    plan, search, south, north = _cross_region_plan(tmp_path, "lake-complete")
+    assert sorted(s['id'] for s in plan['scenes']) == sorted([south['id'], north['id']])
+    assert {s['id']: s['candidate_lakes'] for s in plan['scenes']} == {south['id']: 1, north['id']: 1}
+    assert search.call_args.kwargs['bbox'] == (0.0, 0.0, 1.0, 10.0)  # whole lake searched
+    assert plan['selection']['scene_rule'] == "lake-complete"
 
 
 def test_adaptive_windows_and_notebook_full_scene_fallbacks():

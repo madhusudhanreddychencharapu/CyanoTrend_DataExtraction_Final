@@ -78,6 +78,14 @@ def parser():
         type=catalogue_cap,
         help="Notebook catalogue cap before lake filtering; zero or omitted means all",
     )
+    q.add_argument(
+        "--scene-rule",
+        choices=["lake-complete", "state"],
+        default="lake-complete",
+        help="lake-complete (default): every scene touching any lake of the region, so each "
+        "lake's daily checklist is planned together; state: notebook rule, scene must also "
+        "intersect the region itself",
+    )
     q = sub.add_parser(
         "run", help="Run queue; wait for future saved plans until stopped"
     )
@@ -88,6 +96,19 @@ def parser():
         "--once",
         action="store_true",
         help="Exit when queued work and scheduled retries finish",
+    )
+    q = sub.add_parser(
+        "daily",
+        help="Merge processed S3A/S3B scenes per UTC day and lake on the NASA CyAN 300 m grid",
+    )
+    q.add_argument("--start", required=True, help="First UTC date, YYYY-MM-DD (inclusive)")
+    q.add_argument("--end", required=True, help="Last UTC date, YYYY-MM-DD (inclusive)")
+    q.add_argument(
+        "--method",
+        choices=["area", "nearest"],
+        default="area",
+        help="Combining pixels within one scene: area-weighted mean (default; CyAN's "
+        "area-weighted interpolation) or nearest pixel",
     )
     sub.add_parser("status", help="Unique-scene totals and active processing stages")
     q = sub.add_parser("scenes", help="List scene progress and staging transfer rates")
@@ -237,7 +258,11 @@ def dispatch(a):
     if a.command == "plan":
         from .planning import create_plan
 
-        return create_plan(ws, a.start, a.end, a.country, a.state_id, a.max_scenes, a.lake_region)
+        return create_plan(ws, a.start, a.end, a.country, a.state_id, a.max_scenes, a.lake_region, a.scene_rule)
+    if a.command == "daily":
+        from .daily.merge import run_daily
+
+        return run_daily(ws, a.start, a.end, method=a.method)
     if a.command == "run":
         from .service import serve
 
@@ -276,7 +301,7 @@ def main(argv=None):
     p = parser()
     a = p.parse_args(argv)
     try:
-        if a.json and a.command in ("prepare", "plan", "run"):
+        if a.json and a.command in ("prepare", "plan", "run", "daily"):
             from contextlib import redirect_stdout
 
             with redirect_stdout(sys.stderr):

@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS scenes (
  attempts INTEGER NOT NULL DEFAULT 0, error TEXT, stage TEXT, bytes_downloaded INTEGER DEFAULT 0,
  download_seconds REAL DEFAULT 0, created TEXT NOT NULL, updated TEXT NOT NULL,
  archive TEXT, archive_sha256 TEXT, rows INTEGER DEFAULT 0,
- reference_id TEXT NOT NULL, next_attempt REAL NOT NULL DEFAULT 0);
+ reference_id TEXT NOT NULL, next_attempt REAL NOT NULL DEFAULT 0,
+ retry_start_attempt INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS plans (id TEXT PRIMARY KEY, path TEXT NOT NULL, created TEXT NOT NULL, metadata TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS plan_scenes (plan_id TEXT NOT NULL, scene_id TEXT NOT NULL,
  PRIMARY KEY(plan_id,scene_id), FOREIGN KEY(plan_id) REFERENCES plans(id), FOREIGN KEY(scene_id) REFERENCES scenes(id));
@@ -41,6 +42,11 @@ class Ledger:
         with self.connect() as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.executescript(SCHEMA)
+            # Keep old attempt/log identities when enabling explicit retry batches.
+            c.execute("BEGIN IMMEDIATE")
+            columns = {r[1] for r in c.execute("PRAGMA table_info(scenes)")}
+            if "retry_start_attempt" not in columns:
+                c.execute("ALTER TABLE scenes ADD COLUMN retry_start_attempt INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def connect(self):
@@ -113,7 +119,7 @@ class Ledger:
         with self.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             row = c.execute(
-                "SELECT * FROM scenes WHERE status IN ('queued','retry') AND attempts < 3 AND next_attempt<=? ORDER BY created,id LIMIT 1",
+                "SELECT * FROM scenes WHERE status IN ('queued','retry') AND attempts < retry_start_attempt + 3 AND next_attempt<=? ORDER BY created,id LIMIT 1",
                 (time.time(),),
             ).fetchone()
             if row is None:
@@ -153,9 +159,8 @@ class Ledger:
 
     def fail(self, sid, message):
         with self.connect() as c:
-            n = c.execute("SELECT attempts FROM scenes WHERE id=?", (sid,)).fetchone()[
-                0
-            ]
+            row = c.execute("SELECT attempts,retry_start_attempt FROM scenes WHERE id=?", (sid,)).fetchone()
+            n = row[0] - row[1]
         self.update(
             sid,
             status="failed" if n >= 3 else "retry",
@@ -163,6 +168,23 @@ class Ledger:
             stage="failed",
             next_attempt=time.time() + min(60 * 2 ** (n - 1), 300),
         )
+
+    def requeue_failed(self):
+        """Grant all terminal failures three more attempts without resetting history."""
+        stamp = utcnow()
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            failed = list(c.execute("SELECT id,attempts,error FROM scenes WHERE status='failed' ORDER BY id"))
+            for row in failed:
+                c.execute(
+                    "INSERT INTO timings VALUES (?,?,?,?,?,?,?)",
+                    (row["id"], row["attempts"], "requeue_failed", stamp, 0.0, 1,
+                     json.dumps({"previous_error": row["error"], "additional_attempts": 3})),
+                )
+            c.execute("""UPDATE scenes SET status='queued',stage='requeued',error=NULL,
+                      retry_start_attempt=attempts,next_attempt=0,updated=? WHERE status='failed'""", (stamp,))
+        return {"requeued": len(failed), "additional_attempts_per_scene": 3,
+                "scene_ids": [row["id"] for row in failed]}
 
     def timing(self, sid, attempt, stage, started, seconds, ok, details=None):
         with self.connect() as c:

@@ -42,6 +42,7 @@ class Science(unittest.TestCase):
             "id": str(uuid.uuid4()),
             "name": "S3A_SYNTHETIC",
             "start": "2024-01-01T12:00:00Z",
+            "output_region": {"country": "USA", "state_id": "MI", "state_name": "Michigan"},
         }
         self.l2 = self.root / "l2.nc"
         with netCDF4.Dataset(self.l2, "w") as ds:
@@ -241,8 +242,9 @@ class Science(unittest.TestCase):
         self.assertEqual(list(rows[0]), COLUMNS)
         self.assertEqual(len(COLUMNS), 51)  # 46 notebook + NASA count + 4 lake attributes
         with zipfile.ZipFile(archive) as z:
-            self.assertEqual(len(z.namelist()), 4)
-            self.assertTrue(any(n.endswith("_NASA_CYAN_COMPARISON.csv") for n in z.namelist()))
+            self.assertEqual(len(z.namelist()), 3)
+            self.assertFalse(any(n.endswith("_NASA_CYAN_COMPARISON.csv") for n in z.namelist()))
+            self.assertEqual(sum(n.endswith(".csv") for n in z.namelist()), 1)
             self.assertTrue(any(n.endswith("_ALL_INDEX_STATS.csv") for n in z.namelist()))
 
 

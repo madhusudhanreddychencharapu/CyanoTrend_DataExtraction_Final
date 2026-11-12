@@ -1,5 +1,59 @@
 # Validation record — notebook parity correction
 
+## 2026-11-12: daily index maxima and one-CSV scene ZIP
+
+Full local suite: **72 passed, none skipped**, using the same temporary test
+environment described below. One unrelated AnyIO/pytest deprecation warning
+remains. No live satellite/HPC processing or deployment was run.
+
+The approved daily extension uses independent maximum overlapping values within
+each scene and independent maxima across the UTC day. Tests distinguish this
+from averaging, preserve negative values, exercise more than two scenes, verify
+index-specific masks, check cloud occurrence versus daily valid availability,
+and confirm all five indices reach the daily NetCDF and master CSV. Column tests
+preserve the first 16 names/order, retain the six earlier daily measurements,
+and verify scene-style index-group ordering without native observation counts.
+
+NASA checks cover one lookup per lake/date rather than summing scene counts,
+measured zero and positive counts, unavailable coverage, JSON provenance,
+statistics/metadata agreement, and exactly one CSV among three ZIP members.
+These tests use synthetic/mocked external inputs. They are not an authenticated
+NASA download or real-scene numerical validation.
+
+The core native science files, references and scene CSV schema remain unchanged.
+The daily numerical mapping changes are the explicitly approved maximum rule;
+the earlier organization-only validation record below predates this extension.
+See [daily columns](DAILY_COLUMNS.md) for the 58-column definitions and limitations.
+
+## 2026-11-12: output organization and failed-scene retry batches
+
+Full local suite: **65 passed, none skipped**. The final run used the temporary
+`/private/tmp/cyanotrend-organization-test-env` virtual environment, with existing
+scientific libraries available through system site packages. One unrelated
+AnyIO/pytest deprecation warning was reported. No live satellite processing or
+remote deployment was performed.
+
+New coverage includes all-failed requeueing, three additional attempts with
+60/120-second backoff, retained attempt/log history, concurrent requeue commands,
+retry-column initialization for an existing ledger, required planning state,
+original-state ownership across overlapping plans, UTC day folders, isolated
+native inputs for scenes sharing a date folder, and the three scene output types.
+
+Daily tests check state-specific CSV/NetCDF/manifest files, duplicate-free
+lake/date master rows, replacement of rerun dates while retaining other dates,
+previous-master backups, identical reruns, removal of stale files only in the new
+layout, unchanged legacy files, and recovery from interruption during state-grid
+publication or immediately before/after master replacement.
+
+Source comparison with the pre-change commit confirmed that `core/`,
+`references.py` and `execution.py` are unchanged. Daily grid/merge constants and
+31 existing functions/classes match exactly; changes in the other functions
+were reviewed as file selection, paths and publication. Existing numerical
+assertions remain in the passing suite. This is not a new real-scene numerical
+validation. Unmatched/ambiguous and foreign-country pour-point folder policies
+remain deferred in the project Word note; no affected real-data records were
+verified in these synthetic tests.
+
 ## 2026-10-14: approved NASA DN comparison and zero local threshold
 
 Current offline suite: **37 passed, none skipped**. The test runner and missing

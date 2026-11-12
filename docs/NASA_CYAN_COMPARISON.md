@@ -5,10 +5,10 @@ The 2026-10-14 approved extension adds `NASA_CI_Cyano_detectable_cells` between
 master.csv and master_backup.csv. These files have 51 columns. The backup remains
 the previous successful master, including a header-only initial backup.
 
-The fourth ZIP member is `S3_OLCI_<scene_id>_NASA_CYAN_COMPARISON.csv`, with the
-18 agreed comparison fields plus five traceability fields, in schema.py order.
-It includes the scene identity, acquisition time, Hylak_id, name, HydroLAKES
-area, native/retained/CLDICE/rescued/candidate/detection counts and these NASA fields:
+The scene ZIP now contains only the science NetCDF, enriched statistics CSV,
+and metadata JSON. The separate NASA comparison CSV is no longer packaged.
+Detailed NASA results are retained under `nasa_cyan_comparison.lake_results`
+in JSON, keyed by `Hylak_id`, with these fields:
 
 | Field | Definition |
 | --- | --- |
@@ -77,3 +77,9 @@ Source: [NASA CyAN V6 release notes](https://oceancolor.gsfc.nasa.gov/images/cya
 [NASA CyAN file search](https://oceandata.sci.gsfc.nasa.gov/api/cyan_file_search),
 and [SeaDAS regional projection definitions](https://seadas.gsfc.nasa.gov/help-9.1.0/processors/ProcessL3mapgen.html).
 Offline tests do not certify an authenticated NASA download or a fresh Linux OCSSW run.
+
+The daily CSV now includes independent maximum CI, CI_cyano, NDCI, MPH and FAI
+statistics, cloud-occurrence diagnostics, and one original NASA detection count
+per lake/date. NASA counts are not summed across scenes; missing coverage leaves
+a blank count. Detailed NASA provenance is retained in daily manifests.
+See [daily columns](DAILY_COLUMNS.md) for the full schema and populations.

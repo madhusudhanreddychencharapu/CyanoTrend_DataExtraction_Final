@@ -14,7 +14,7 @@ def _cross_region_plan(tmp_path, scene_rule):
     lakes = gpd.GeoDataFrame({"Hylak_id": [1, 2], "country_iso3": ["USA", "USA"],
         "state_id": ["north", "elsewhere"], "state_name": ["North", "Elsewhere"]},
         geometry=[box(0, 0, 1, 10), box(2, 8, 3, 9)], crs=4326)
-    admin = gpd.GeoDataFrame({"country_iso3": ["USA"], "shapeID": ["north"]},
+    admin = gpd.GeoDataFrame({"country_iso3": ["USA"], "shapeID": ["north"], "shapeName": ["North"]},
         geometry=[box(0, 9, 1, 10)], crs=4326)
     south = {"id": str(uuid.uuid4()), "satellite": "S3A", "geofootprint": mapping(box(0, 0, 1, 1))}
     north = {"id": str(uuid.uuid4()), "satellite": "S3B", "geofootprint": mapping(box(0, 8, 3, 10))}
@@ -58,5 +58,5 @@ def test_adaptive_windows_and_notebook_full_scene_fallbacks():
 
 def test_zero_catalogue_cap_matches_notebook_all():
     from cyanotrend.cli import parser
-    args = parser().parse_args(['plan','--start','2024-08-15','--end','2024-08-15','--max-scenes','0'])
+    args = parser().parse_args(['plan','--start','2024-08-15','--end','2024-08-15','--country','USA','--state-id','north','--max-scenes','0'])
     assert args.max_scenes == 0

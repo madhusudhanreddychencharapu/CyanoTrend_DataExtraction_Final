@@ -29,7 +29,7 @@ def candidate_path(workspace, sid):
 
 
 def build_bundle(workspace, scene, reference_id, raster, stats, metadata, comparison):
-    """Publish science, enriched stats, NASA comparison and provenance together."""
+    """Publish science, one enriched statistics CSV, and provenance."""
     from .schema import COLUMNS, COMPARISON_COLUMNS
     path = candidate_path(workspace, scene["id"])
     path.parent.mkdir(exist_ok=True)
@@ -39,10 +39,11 @@ def build_bundle(workspace, scene, reference_id, raster, stats, metadata, compar
     if list(stats.columns) != COLUMNS:
         raise ValueError("Notebook export columns differ from the approved schema")
     stats.to_csv(csv_path, index=False)
-    comparison_path = raster.parent / f"{prefix}_NASA_CYAN_COMPARISON.csv"
     if list(comparison.columns) != COMPARISON_COLUMNS:
         raise ValueError("NASA comparison columns differ from the approved schema")
-    comparison.to_csv(comparison_path, index=False)
+    # Retain per-lake NASA coverage/provenance in JSON, without a second CSV.
+    nasa_columns = ["Hylak_id"] + [c for c in COMPARISON_COLUMNS if c.startswith("NASA_")]
+    nasa_lakes = json.loads(comparison[nasa_columns].replace("", None).to_json(orient="records"))
     meta = {
         **metadata,
         "software_version": __import__("cyanotrend").__version__,
@@ -51,13 +52,13 @@ def build_bundle(workspace, scene, reference_id, raster, stats, metadata, compar
         "reference_id": reference_id,
         "statistics_rows": len(stats),
         "coordinate_source": {"latitude": "HydroLAKES Pour_lat", "longitude": "HydroLAKES Pour_long"},
-        "files": {**metadata.get("files", {}), "nasa_cyan_comparison_csv": comparison_path.name},
-        "sha256": {raster.name: digest(raster), csv_path.name: digest(csv_path), comparison_path.name: digest(comparison_path)},
+        "files": {"snap_all_science_netcdf": raster.name, "all_index_stats_csv": csv_path.name},
+        "nasa_cyan_comparison": {**metadata.get("nasa_cyan_comparison", {}), "lake_results": nasa_lakes},
+        "sha256": {raster.name: digest(raster), csv_path.name: digest(csv_path)},
     }
     with zipfile.ZipFile(temp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
         z.write(raster, raster.name)
         z.write(csv_path, csv_path.name)
-        z.write(comparison_path, comparison_path.name)
         z.writestr(f"{prefix}_METADATA.json", json.dumps(clean_json(meta), indent=2, default=str, allow_nan=False))
     with temp.open("rb") as f:
         os.fsync(f.fileno())
@@ -165,14 +166,16 @@ def process(workspace, sid, attempt):
                     meta["nasa_cyan_comparison"] = nasa_metadata
                 with metrics.stage("packaging"):
                     # Native compact outputs remain available like the notebook; L1/L2 are temporary.
-                    native_dir = workspace.archive(scene).parent / f"{sid}_{config_hash}_native"
+                    native_dir = workspace.archive(scene).parent
                     native_dir.mkdir(parents=True, exist_ok=True)
                     native_outputs = []
+                    native_files = []
                     for source in files:
                         destination = native_dir / source.name
                         temporary = destination.with_suffix(".nc.part")
                         shutil.copyfile(source, temporary)
                         os.replace(temporary, destination)
+                        native_files.append(destination)
                         native_outputs.append({"path": str(destination.relative_to(workspace.output)), "sha256": digest(destination)})
                     matched_lakes = lakes[lakes.Hylak_id.isin(table.Hylak_id)]
                     unresolved = matched_lakes[matched_lakes.admin_match_status != "matched"] if "admin_match_status" in matched_lakes else matched_lakes.iloc[0:0]
@@ -188,10 +191,13 @@ def process(workspace, sid, attempt):
                         "attempt": attempt,
                     })
                     # Lake pixels on NASA CyAN's CONUS 300 m grid, beside the ZIP, for the
-                    # daily merge. Not fatal: the daily step rebuilds it from the native folder.
+                    # daily merge. Not fatal: the daily step rebuilds it from this scene's native files.
                     try:
-                        from .daily.grid import write_scene_grid
-                        meta["nasa_cyan_grid"] = write_scene_grid(native_dir, scene)
+                        from .daily.grid import write_scene_grid, scene_grid_path
+                        meta["nasa_cyan_grid"] = write_scene_grid(
+                            native_dir, scene, scene_grid_path(native_dir, sid, config_hash),
+                            native_files=native_files,
+                        )
                     except Exception as exc:
                         meta["nasa_cyan_grid"] = {"status": "error", "error": redact(f"{type(exc).__name__}: {exc}")[:500]}
                     build_bundle(workspace, scene, record["reference_id"], raster, table, meta, comparison)

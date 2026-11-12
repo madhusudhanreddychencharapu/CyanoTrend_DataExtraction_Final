@@ -9,7 +9,8 @@ from cyanotrend.worker import process, candidate_path
 from cyanotrend.publication import Publisher
 
 
-def test_two_windows_use_one_download_and_one_scene_publication(tmp_path):
+def test_two_windows_use_one_download_and_one_scene_publication(tmp_path, monkeypatch):
+    monkeypatch.setattr('cyanotrend.nasa_cyan.discover_tiles', lambda day: [])
     fixture = science_fixture.Science('test_window_identity_is_preserved')
     fixture.setUp()
     try:
@@ -50,5 +51,10 @@ def test_two_windows_use_one_download_and_one_scene_publication(tmp_path):
         assert len(master) == 2 and master.native_lake_pixels.sum() == 12
         assert list(master.state_name) == ['West','East']
         assert len(list(ws.output.rglob('*_lakepixels.nc'))) == 2
+        folder = ws.archive(scene).parent
+        assert folder.relative_to(ws.output).parts == ('world', 'USA', 'Michigan', '2024', '01', '01')
+        assert len(list(folder.glob('*_lakepixels.nc'))) == 2
+        assert not list(folder.glob('*_native'))
+        assert len(list(folder.glob('*_nasa_grid.nc'))) == 1
     finally:
         fixture.tearDown()

@@ -38,6 +38,7 @@ class Operations(unittest.TestCase):
             "id": str(uuid.uuid4()),
             "start": "2024-08-14T12:00:00Z",
             "name": "S3A_TEST",
+            "output_region": {"country": "USA", "state_id": "one", "state_name": "One"},
             "regions": [
                 {"country": "USA", "state_id": "one", "state_name": "One"},
                 {"country": "USA", "state_id": "two", "state_name": "Two"},
@@ -64,23 +65,18 @@ class Operations(unittest.TestCase):
             writer.writerow(
                 {"scene_id": s["id"], "Hylak_id": i + 1}
             )
-        from cyanotrend.schema import COMPARISON_COLUMNS
-        comparison = io.StringIO()
-        cwriter = csv.DictWriter(comparison, fieldnames=COMPARISON_COLUMNS)
-        cwriter.writeheader()
-        for i in range(rows):
-            cwriter.writerow(
-                {"scene_id": s["id"], "Hylak_id": i + 1, "NASA_CYAN_coverage_status": "unavailable"}
-            )
+        from cyanotrend.schema import NASA_MEASUREMENT_COLUMNS
         contents = {
             f"S3_OLCI_{s['id']}_ALL_SCIENCE_300m_CF.nc": b"synthetic fixture, not scientific NetCDF",
             f"S3_OLCI_{s['id']}_ALL_INDEX_STATS.csv": buf.getvalue().encode(),
-            f"S3_OLCI_{s['id']}_NASA_CYAN_COMPARISON.csv": comparison.getvalue().encode(),
         }
         meta = {
             "scene": s,
             "reference_id": "ref",
             "statistics_rows": rows,
+            "nasa_cyan_comparison": {"lake_results": [
+                {"Hylak_id": i + 1, "NASA_CYAN_coverage_status": "unavailable",
+                 **{c: None for c in NASA_MEASUREMENT_COLUMNS}} for i in range(rows)]},
             "sha256": {k: hashlib.sha256(v).hexdigest() for k, v in contents.items()},
         }
         with zipfile.ZipFile(p, "w") as z:

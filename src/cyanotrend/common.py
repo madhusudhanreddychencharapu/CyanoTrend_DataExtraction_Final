@@ -33,6 +33,21 @@ def sync_dir(path):
         os.close(fd)
 
 
+def path_component(value, label):
+    """Preserve a full administrative name while refusing unsafe/empty paths."""
+    if not isinstance(value, str) or not value.strip() or value in {".", ".."}:
+        raise ValueError(f"Missing or invalid {label} for output folder")
+    if any(c in value for c in ('/', '\\', '\x00')):
+        raise ValueError(f"Invalid {label} for output folder: {value!r}")
+    return value
+
+
+def dated_region_folder(root, country, state, day):
+    return (Path(root) / path_component(country, "country")
+            / path_component(state, "state name") / f"{day.year:04d}"
+            / f"{day.month:02d}" / f"{day.day:02d}")
+
+
 def atomic_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,11 +131,11 @@ class Workspace:
 
     def archive(self, scene):
         stamp = datetime.fromisoformat(scene["start"].replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            raise ValueError("Scene start time requires a timezone")
+        day = stamp.astimezone(timezone.utc).date()
         sid = str(uuid.UUID(scene["id"]))
-        return (
-            self.output
-            / "world"
-            / f"{stamp.year:04d}"
-            / f"{stamp.month:02d}"
-            / f"{sid}.zip"
-        )
+        owner = scene.get("output_region", {})
+        return dated_region_folder(
+            self.output / "world", owner.get("country"), owner.get("state_name"), day
+        ) / f"{sid}.zip"

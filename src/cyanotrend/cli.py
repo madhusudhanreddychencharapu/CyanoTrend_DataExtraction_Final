@@ -70,8 +70,8 @@ def parser():
     )
     q.add_argument("--start", required=True, help="First date, YYYY-MM-DD (inclusive)")
     q.add_argument("--end", required=True, help="Last date, YYYY-MM-DD (inclusive)")
-    q.add_argument("--country", help="Optional ISO3 country filter")
-    q.add_argument("--state-id", help="Optional exact shapeID from regions")
+    q.add_argument("--country", required=True, help="ISO3 country for the selected state")
+    q.add_argument("--state-id", required=True, help="Exact state/province shapeID from regions")
     q.add_argument("--lake-region", choices=["WORLD", "USA"], default="WORLD", help="Loaded HydroLAKES universe, independent of planning state (notebook default: WORLD)")
     q.add_argument(
         "--max-scenes",
@@ -105,12 +105,12 @@ def parser():
     q.add_argument("--end", required=True, help="Last UTC date, YYYY-MM-DD (inclusive)")
     q.add_argument(
         "--method",
-        choices=["area", "nearest"],
-        default="area",
-        help="Combining pixels within one scene: area-weighted mean (default; CyAN's "
-        "area-weighted interpolation) or nearest pixel",
+        choices=["max"],
+        default="max",
+        help="Maximum valid overlapping value within each scene and across the day, independently per index",
     )
     sub.add_parser("status", help="Unique-scene totals and active processing stages")
+    sub.add_parser("retry-failed", help="Requeue all failed scenes with three additional attempts; preserve logs and attempt history")
     q = sub.add_parser("scenes", help="List scene progress and staging transfer rates")
     q.add_argument(
         "--status",
@@ -277,6 +277,8 @@ def dispatch(a):
     if a.command == "verify":
         return verify(ws, a.scene_id)
     ledger = Ledger(ws.db)
+    if a.command == "retry-failed":
+        return ledger.requeue_failed()
     if a.command == "status":
         return {
             **ledger.summary(),

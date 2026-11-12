@@ -13,7 +13,7 @@ import os
 import zipfile
 from pathlib import Path
 from .common import atomic_json, digest, sync_dir, utcnow
-from .schema import COLUMNS, COMPARISON_COLUMNS, NASA_DETECTION_COLUMN, NASA_MEASUREMENT_COLUMNS
+from .schema import COLUMNS, NASA_DETECTION_COLUMN, NASA_MEASUREMENT_COLUMNS
 
 
 def validate_archive(path, scene_id, reference_id):
@@ -22,10 +22,9 @@ def validate_archive(path, scene_id, reference_id):
         metadata_member = f"{prefix}_METADATA.json"
         csv_member = f"{prefix}_ALL_INDEX_STATS.csv"
         raster_member = f"{prefix}_ALL_SCIENCE_300m_CF.nc"
-        comparison_member = f"{prefix}_NASA_CYAN_COMPARISON.csv"
-        expected = {metadata_member, csv_member, raster_member, comparison_member}
-        if set(z.namelist()) != expected or len(z.namelist()) != 4:
-            raise ValueError("Scene ZIP must contain metadata, statistics CSV, NASA comparison CSV and science NetCDF")
+        expected = {metadata_member, csv_member, raster_member}
+        if set(z.namelist()) != expected or len(z.namelist()) != 3:
+            raise ValueError("Scene ZIP must contain metadata, one statistics CSV and science NetCDF")
         if z.testzip():
             raise ValueError("Scene ZIP failed CRC verification")
         meta = json.loads(z.read(metadata_member))
@@ -47,21 +46,19 @@ def validate_archive(path, scene_id, reference_id):
             keys.add(key)
         if len(table) != meta["statistics_rows"]:
             raise ValueError("CSV row count disagrees with metadata")
-        comparison_reader = csv.DictReader(io.StringIO(z.read(comparison_member).decode("utf-8")))
-        if comparison_reader.fieldnames != COMPARISON_COLUMNS:
-            raise ValueError("NASA comparison CSV schema mismatch")
-        comparison = list(comparison_reader)
-        comparison_keys = [(r["scene_id"], r["Hylak_id"]) for r in comparison]
+        comparison = meta["nasa_cyan_comparison"]["lake_results"]
+        comparison_keys = [(scene_id, str(r["Hylak_id"])) for r in comparison]
         if len(comparison_keys) != len(keys) or set(comparison_keys) != keys:
             raise ValueError("NASA comparison rows do not match scene lake identities")
-        lookup = {(r["scene_id"], r["Hylak_id"]): r for r in comparison}
+        lookup = {(scene_id, str(r["Hylak_id"])): r for r in comparison}
         for row in table:
             other = lookup[(row["scene_id"], row["Hylak_id"])]
-            if row[NASA_DETECTION_COLUMN] != other[NASA_DETECTION_COLUMN]:
-                raise ValueError("NASA detection count differs between CSVs")
+            value = other[NASA_DETECTION_COLUMN]
+            if row[NASA_DETECTION_COLUMN] != ("" if value is None else str(value)):
+                raise ValueError("NASA detection count differs between statistics and metadata")
             measurements = [other[c] for c in NASA_MEASUREMENT_COLUMNS]
             if other["NASA_CYAN_coverage_status"] != "complete":
-                if any(measurements):
+                if any(v is not None for v in measurements):
                     raise ValueError("Incomplete NASA coverage must have blank measurements")
             else:
                 try:
@@ -74,7 +71,7 @@ def validate_archive(path, scene_id, reference_id):
                     raise ValueError("NASA category counts/area are inconsistent")
         if z.getinfo(raster_member).file_size == 0:
             raise ValueError("Empty NetCDF member")
-        for member in (csv_member, raster_member, comparison_member):
+        for member in (csv_member, raster_member):
             import hashlib
 
             h = hashlib.sha256()
@@ -157,6 +154,8 @@ class Publisher:
         self.initialize()
         sid = scene["id"]
         record = self.ledger.scene(sid)
+        # The first queued plan owns the files, even when another state reuses this scene.
+        scene = json.loads(record["scene_json"])
         final = self.ws.archive(scene)
         if record["status"] == "done":
             if not final.exists() or digest(final) != record["archive_sha256"]:

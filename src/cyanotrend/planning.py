@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import hashlib
 import json
 import uuid
-from .common import atomic_json, file_lock, utcnow, digest
+from .common import atomic_json, file_lock, utcnow, digest, path_component
 from .ledger import Ledger
 from . import references
 from .identity import science_fingerprint
@@ -40,6 +40,8 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
 
     if scene_rule not in SCENE_RULES:
         raise ValueError(f"scene_rule must be one of {', '.join(SCENE_RULES)}")
+    if not country or not state_id:
+        raise ValueError("Scene output organization requires --country and --state-id")
 
     workspace.ensure()
     m = references.manifest(workspace)
@@ -62,6 +64,14 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
             chosen = chosen[chosen.shapeID.astype(str) == state_id]
         if chosen.empty:
             raise ValueError("Country/state not found; inspect regions first")
+        names = chosen.shapeName.dropna().astype(str).unique()
+        if len(names) != 1:
+            raise ValueError("Selected state must have one unambiguous full name")
+        output_region = {
+            "country": path_component(country.upper(), "country"),
+            "state_id": str(state_id),
+            "state_name": path_component(names[0], "state name"),
+        }
         geom = union_all(chosen.geometry)
         pool = lakes[lakes.intersects(geom)].copy()
         bounds = list(geom.bounds)
@@ -103,12 +113,14 @@ def create_plan(workspace, start, end, country=None, state_id=None, max_scenes=N
             scene["candidate_lakes"] = int(len(subset))
             scene["lake_region"] = lake_region
             scene["lake_region_source_sha256"] = usa_checksum
+            scene["output_region"] = dict(output_region)
             scenes[scene["id"]] = scene
     selection = {
         "start": start,
         "end": end,
         "country": country,
         "state_id": state_id,
+        "state_name": output_region["state_name"],
         "max_scenes": max_scenes,
         "lake_region": lake_region,
         "lake_region_source_sha256": usa_checksum,

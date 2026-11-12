@@ -155,7 +155,8 @@ def serve(workspace, workers=5, once=False, poll_seconds=5):
                         raise
                     active[sid] = (proc, log)
                     print(
-                        f"{utcnow()} started {sid} attempt {job['attempts']}/3 ({len(active)}/{workers} workers)",
+                        f"{utcnow()} started {sid} attempt {job['attempts']} "
+                        f"(batch {job['attempts'] - job['retry_start_attempt']}/3; {len(active)}/{workers} workers)",
                         flush=True,
                     )
                 if not active:

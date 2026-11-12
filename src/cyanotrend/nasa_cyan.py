@@ -7,6 +7,7 @@ NASA V6: DN 0 below detection, 1..253 detections, 254 land, 255 no data.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import logging
 import netrc
 from pathlib import Path
@@ -25,7 +26,7 @@ from shapely.ops import transform as transform_geometry
 
 from .common import atomic_json, digest, file_lock, utcnow
 from .schema import (COLUMNS, COMPARISON_COLUMNS, COMPARISON_LOCAL_COLUMNS,
-                     NASA_DETECTION_COLUMN, NASA_MEASUREMENT_COLUMNS)
+                     NASA_DETECTION_COLUMN, NASA_MEASUREMENT_COLUMNS, NASA_TRACE_COLUMNS)
 from .telemetry import redact
 
 LOG = logging.getLogger(__name__)
@@ -259,11 +260,10 @@ def lake_sources(geometry, records):
     return candidates
 
 
-def compare_scene(stats, lakes, acquisition_start, cache):
-    """Add one count to stats; keep all detailed measurements in comparison CSV."""
+def measure_daily(lakes, acquisition_start, cache, lake_ids=None):
+    """Measure the original daily NASA raster once per requested lake, without resampling."""
     day = utc_date(acquisition_start)
-    result = stats.copy()
-    comparison = stats[COMPARISON_LOCAL_COLUMNS].copy()
+    lake_ids = list(lakes.Hylak_id if lake_ids is None else lake_ids)
     catalogue_error = None
     try:
         records = discover_tiles(day)
@@ -286,7 +286,7 @@ def compare_scene(stats, lakes, acquisition_start, cache):
             raise file_cache[name]
         return file_cache[name]
 
-    for lid in comparison.Hylak_id:
+    for lid in lake_ids:
         record = {key: None for key in NASA_MEASUREMENT_COLUMNS}
         record.update({"NASA_CYAN_date": day.isoformat(), "NASA_CYAN_source_files": "",
                        "NASA_CYAN_tile_ids": "", "NASA_CYAN_coverage_status": "unavailable",
@@ -360,21 +360,30 @@ def compare_scene(stats, lakes, acquisition_start, cache):
             lake_warnings[str(lid)] = failures
         record["NASA_CYAN_source_files"] = ";".join(r["filename"] for r in used)
         record["NASA_CYAN_tile_ids"] = ";".join(f"{r['region']}:{r['tile']}" for r in used)
-        rows.append(record)
-    nasa = pd.DataFrame(rows, index=comparison.index)
+        rows.append({"Hylak_id": int(lid), **record})
+    nasa = pd.DataFrame(rows, columns=["Hylak_id"] + NASA_MEASUREMENT_COLUMNS + NASA_TRACE_COLUMNS)
     for column in NASA_MEASUREMENT_COLUMNS[1:]:
         nasa[column] = pd.array(nasa[column], dtype="Int64")
-    comparison = pd.concat([comparison, nasa], axis=1)[COMPARISON_COLUMNS]
-    result[NASA_DETECTION_COLUMN] = nasa[NASA_DETECTION_COLUMN]
     metadata = {
         "date_utc": day.isoformat(), "collection_concept_id": COLLECTION,
         "catalogue_url": CMR_URL, "source_files": provenance,
         "lake_warnings": lake_warnings,
-        "coverage_status_counts": comparison.NASA_CYAN_coverage_status.value_counts().to_dict(),
+        "coverage_status_counts": nasa.NASA_CYAN_coverage_status.value_counts().to_dict(),
+        "lake_results": json.loads(nasa.to_json(orient="records")),
         "count_rule": "Original raster cell centres strictly inside full HydroLAKES polygon; no resampling",
         "dn_categories": {"non_detectable": [0], "CI_cyano_detectable": [1, 253], "land": [254], "no_valid_data": [255]},
         "area_method": "unique selected cells times abs(affine determinant), converted from CRS units to km2; all DN classes included",
         "overlap_rule": "identical integer grid addresses counted once; conflicting DN values rejected",
         "missing_policy": "blank measurements and logged warning when whole-lake coverage is unavailable",
     }
-    return result[COLUMNS], comparison, metadata
+    return nasa, metadata
+
+
+def compare_scene(stats, lakes, acquisition_start, cache):
+    """Add the NASA daily count to scene statistics; keep detailed provenance in memory."""
+    nasa, metadata = measure_daily(lakes, acquisition_start, cache, stats.Hylak_id)
+    nasa.index = stats.index
+    result = stats.copy()
+    result[NASA_DETECTION_COLUMN] = nasa[NASA_DETECTION_COLUMN]
+    comparison = pd.concat([stats[COMPARISON_LOCAL_COLUMNS], nasa.drop(columns="Hylak_id")], axis=1)
+    return result[COLUMNS], comparison[COMPARISON_COLUMNS], metadata

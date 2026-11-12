@@ -140,12 +140,13 @@ def _footprint(r0, r1, c0, c1):
 
 def _scene(name, satellite, start, footprint):
     return {"id": str(uuid.uuid4()), "name": name, "satellite": satellite,
+            "output_region": {"country": "USA", "state_name": "Michigan", "state_id": "MI"},
             "start": start, "end": start, "geofootprint": footprint}
 
 
 def _write_native(ws, scene, cells):
     """cells: list of (row, col, value or None for invalid)."""
-    folder = ws.archive(scene).parent / f"{scene['id']}_cfg_native"
+    folder = ws.archive(scene).parent
     folder.mkdir(parents=True, exist_ok=True)
     rows = np.array([c[0] for c in cells])
     cols = np.array([c[1] for c in cells])
@@ -159,6 +160,11 @@ def _write_native(ws, scene, cells):
             ("latitude", "f4", lat), ("longitude", "f4", lon),
             ("source_row", "i4", rows - rows.min()), ("source_col", "i4", cols - cols.min()),
             ("ci_valid_mask", "u1", valid.astype(np.uint8)),
+            ("ci_candidate_mask", "u1", (valid & (value > 0)).astype(np.uint8)),
+            ("valid_water_mask", "u1", valid.astype(np.uint8)),
+            ("cloud_excluded_mask", "u1", (~valid).astype(np.uint8)),
+            *[(f"{name.lower()}_valid_mask", "u1", valid.astype(np.uint8)) for name in ("NDCI", "MPH", "FAI")],
+            *[(name, "f4", value) for name in ("NDCI", "MPH", "FAI")],
             ("CI", "f4", np.where(valid & (value > 0), value, np.nan)),
             ("SS_665", "f4", np.where(valid, 1e-3, np.nan)),
         ]:
@@ -170,7 +176,8 @@ def _block(r0, r1, c0, c1, value_of):
 
 
 @pytest.fixture
-def workspace(tmp_path):
+def workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr("cyanotrend.nasa_cyan.discover_tiles", lambda day: [])
     ws = Workspace.create(tmp_path / "out", tmp_path / "refs", tmp_path / "scratch", tmp_path / "ocssw")
     ws.ensure()
     return ws
@@ -181,14 +188,16 @@ def _lakes():
         "Hylak_id": [101, 202], "Lake_name": ["Lake A", "Lake B"], "Lake_area": [2.25, 2.25],
         "latitude": [43.95, 43.95], "longitude": [-83.6, -83.5],
         "states": ["Michigan", "Michigan; Wisconsin"], "state_ids": ["MI", "MI; WI"],
+        "country_iso3": ["USA", "USA"], "state_name": ["Michigan", "Wisconsin"],
+        "admin_match_status": ["matched", "matched"],
     }, geometry=[_lake_polygon(*LAKE_A), _lake_polygon(*LAKE_B)], crs=4326)
 
 
-def _read(ws):
-    folder = ws.output / "daily" / "USA" / "2024" / "08" / DAY
-    with (folder / "daily_lakes.csv").open() as f:
+def _read(ws, state="Michigan"):
+    folder = ws.output / "daily" / "USA" / state / "2024" / "08" / "14"
+    with (folder / f"{DAY}_lakes.csv").open() as f:
         rows = {int(r["Hylak_id"]): r for r in csv.DictReader(f)}
-    manifest = json.loads((folder / "day_manifest.json").read_text())
+    manifest = json.loads((folder / f"{DAY}_manifest.json").read_text())
     return rows, manifest, folder
 
 
@@ -204,6 +213,7 @@ def test_michigan_then_wisconsin_day(workspace):
     s3b2 = _scene("S3B_OL_1_EFR____20240814T155700_20240814T160000_20240815T190100_0179_096_011_2520_PS2_O_NT_004",
                   "S3B", "2024-08-14T15:57:00Z", _footprint(*LAKE_B))
     catalogue_scenes = [s3a1, s3a1_nr, s3b1, s3b2]
+    s3b2["output_region"] = {"country": "USA", "state_name": "Wisconsin", "state_id": "WI"}
 
     def catalogue(a, b, bbox=None):
         assert a == b == DAY and bbox is not None
@@ -221,8 +231,8 @@ def test_michigan_then_wisconsin_day(workspace):
     for s in (s3a1, s3b1):
         ledger.update(s["id"], status="done", stage="complete", archive=str(ws.archive(s)))
     # Make S3A-1's never-valid cell invalid in its own pass too.
-    path = next((ws.archive(s3a1).parent).glob(f"{s3a1['id']}_cfg_native"))
-    with netCDF4.Dataset(next(path.glob("*.nc")), "a") as ds:
+    path = ws.archive(s3a1).parent / f"{s3a1['id']}_full_cfg_lakepixels.nc"
+    with netCDF4.Dataset(path, "a") as ds:
         x, y = g.project(ds["longitude"][:], ds["latitude"][:])
         r, c = g.cell_of(x, y)
         bad = (r == 3074) & (c == 11849)
@@ -241,12 +251,14 @@ def test_michigan_then_wisconsin_day(workspace):
     assert int(a["CI_cyano_detectable_cells"]) == 24  # every column detected by one pass or the other
     assert int(a["No_valid_data_cells"]) == 1
     assert float(a["CI_cyano_max"]) == pytest.approx(2e-3, rel=1e-5)
-    assert [w["Hylak_id"] for w in manifest["waiting_lakes"]] == [202]
-    assert manifest["waiting_lakes"][0]["missing_scenes"] == [s3b2["name"]]
+    assert manifest["waiting_lakes"] == []
+    _, wi_manifest, _ = _read(ws, "Wisconsin")
+    assert [w["Hylak_id"] for w in wi_manifest["waiting_lakes"]] == [202]
+    assert wi_manifest["waiting_lakes"][0]["missing_scenes"] == [s3b2["name"]]
     s3a_entry = next(x for x in manifest["acquisitions"] if x["satellite"] == "S3A")
     assert s3a_entry["status"] == "done" and len(s3a_entry["versions"]) == 2  # NR version not needed
     assert (ws.archive(s3a1).parent / f"{s3a1['id']}_cfg_nasa_grid.nc").exists()
-    with netCDF4.Dataset(folder / "daily_grid.nc") as ds:
+    with netCDF4.Dataset(folder / f"{DAY}_grid.nc") as ds:
         assert ds.dimensions["cell"].size == 25
         assert sorted(set(ds["DN"][:].tolist()))[-1] == 255
 
@@ -259,11 +271,21 @@ def test_michigan_then_wisconsin_day(workspace):
     with patch("cyanotrend.references.manifest", return_value={"reference_id": "ref"}):
         assert run_daily(ws, DAY, DAY, catalogue=catalogue, lakes=_lakes())["ok"]
     rows2, manifest2, _ = _read(ws)
-    assert set(rows2) == {101, 202} and manifest2["waiting_lakes"] == []
+    wi_rows, wi_manifest2, wi_folder = _read(ws, "Wisconsin")
+    assert set(rows2) == {101} and set(wi_rows) == {202}
+    assert manifest2["waiting_lakes"] == wi_manifest2["waiting_lakes"] == []
     assert rows2[101] == a  # unchanged lake: identical row
-    b = rows2[202]
+    b = wi_rows[202]
     assert b["day_status"] == "complete" and b["states"] == "Michigan; Wisconsin"
     assert int(b["CI_cyano_detectable_cells"]) == 5 and int(b["Non_detectable_cells"]) == 20
+    with netCDF4.Dataset(wi_folder / f"{DAY}_grid.nc") as ds:
+        assert set(ds["Hylak_id"][:].tolist()) == {202}
+    with (ws.output / "daily/master_merged_daily.csv").open() as f:
+        master = list(csv.DictReader(f))
+    with (ws.output / "daily/master_merged_daily_backup.csv").open() as f:
+        backup = list(csv.DictReader(f))
+    assert {int(r["Hylak_id"]) for r in master} == {101, 202} and len(master) == 2
+    assert backup == [a]
 
 
 def test_permanently_failed_scene_gives_partial_row(workspace):
@@ -291,6 +313,6 @@ def test_permanently_failed_scene_gives_partial_row(workspace):
 def test_daily_command_is_available():
     from cyanotrend.cli import parser
     a = parser().parse_args(["daily", "--start", DAY, "--end", DAY])
-    assert a.command == "daily" and a.method == "area"
-    a = parser().parse_args(["plan", "--start", DAY, "--end", DAY])
+    assert a.command == "daily" and a.method == "max"
+    a = parser().parse_args(["plan", "--start", DAY, "--end", DAY, "--country", "USA", "--state-id", "MI"])
     assert a.scene_rule == "lake-complete"

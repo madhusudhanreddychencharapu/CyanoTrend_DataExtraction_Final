@@ -35,8 +35,8 @@ science_audit.json includes remaining operational/context differences.
 Scene CSV, master and backup preserve the final notebook names/order, with
 NASA_CI_Cyano_detectable_cells inserted between ci_cyano_detection_pixels and
 CI_valid_pixels, followed by state_name, state_id, latitude, longitude.
-There are 51 columns. Detailed NASA measurements and traceability are confined
-to the added NASA_CYAN_COMPARISON.csv and metadata JSON.
+There are 51 columns. Detailed NASA measurements and traceability are retained
+in metadata JSON; the separate NASA comparison CSV is no longer packaged.
 The earlier compact_stats function remains unchanged for reference, but its
 per-window column names are not substituted into the final scene/master outputs.
 Coordinates appended to CSV are original HydroLAKES Pour_lat/Pour_long. Pixel
@@ -45,13 +45,19 @@ against ADM1 geometry; unmatched/ambiguous points remain blank, not nearest-stat
 
 ## Operational differences retained
 
+The November 12 daily extension is explicitly separate from native scene parity:
+daily grid placement now uses maximum overlapping values, then independent
+daily maxima for all five indices. Its 58-column CSV includes daily cloud
+diagnostics and a NASA count. See [daily columns](DAILY_COLUMNS.md) for populations
+and the distinction between all-valid and detectable-only CI-cyano statistics.
+
 Independent process per scene; windows remain sequential within each scene.
 One staging download per scene, saved queue, three attempts, single master writer,
 previous-successful-master backup, locks/recovery and CLI telemetry remain.
 A separate process owns each export context, so no mutable notebook globals are
 shared across concurrent scenes. Output filenames/folder root, timestamps,
 operational checksums, and added state metadata cannot be byte-identical to Colab.
-Native outputs remain alongside the four-file published ZIP. Successful scratch is
+Native outputs remain alongside the three-file published ZIP. Successful scratch is
 removed; failed scratch is retained. An empty native scene completes without a
 fabricated NetCDF/share ZIP, as the notebook's processing/share distinction requires.
 

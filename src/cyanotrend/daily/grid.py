@@ -19,7 +19,9 @@ parallelogram spanned by its neighbouring pixels) and mapped to cells:
   Urquhart & Schaeffer 2019, Data in Brief 28, 104826);
 - "nearest": the value of the overlapping pixel whose centre is closest
   to the cell centre (invalid if that pixel is invalid).
-Both are stored, so the day stage can switch without rebuilding files.
+These two CI_cyano fields remain stored for reference. The daily stage now uses
+the independently stored maximum valid overlapping value for each of CI,
+CI_cyano, NDCI, MPH and FAI, as explicitly selected for the daily extension.
 """
 from __future__ import annotations
 
@@ -32,7 +34,7 @@ import uuid
 
 import numpy as np
 
-SCHEMA = "cyanotrend-nasa-grid-1"
+SCHEMA = "cyanotrend-nasa-grid-2"
 CRS_EPSG = 5070
 CELL_M = 300.0
 TILE_CELLS = 2000
@@ -52,7 +54,7 @@ N_COLS = TILE_COLUMNS * TILE_CELLS
 SUBSAMPLES = 6  # 6 x 6 footprint points per pixel: 50 m spacing for a 300 m pixel
 CHUNK_PIXELS = 40000
 VECTOR_RANGE_M = (100.0, 2500.0)  # plausible OLCI FR pixel spacing
-METHODS = ("area", "nearest")
+METHODS = ("area", "nearest", "max")
 VALUE_DEFINITION = (
     "CI_cyano before the detection threshold: CI where CI is finite (SS681 < 0, "
     "not clear water) and SS665 > 0, else 0 for CI-valid water"
@@ -203,14 +205,22 @@ def native_pixels(path):
         else:  # compact files written before the CI corrections existed
             valid = (read("valid_water_mask", 0) == 1) & np.isfinite(read("SS_681"))
             valid_source = "valid_water_mask & finite SS_681 (no ci_valid_mask in file)"
+        indices = {"CI": np.where((read("ci_candidate_mask", 0) == 1) & valid, ci, np.nan)}
+        for name in ("NDCI", "MPH", "FAI"):
+            indices[name] = np.where(read(f"{name.lower()}_valid_mask", 0) == 1, read(name), np.nan)
+        flags = {"primary_retained": read("valid_water_mask", 0) == 1,
+                 "cloud_excluded": read("cloud_excluded_mask", 0) == 1}
     located = np.isfinite(lat) & np.isfinite(lon) & (srow >= 0) & (scol >= 0)
     valid &= located
     value = np.where(valid & np.isfinite(ci) & (ss665 > 0), ci, 0.0)
+    indices["CI_cyano"] = np.where(valid, value, np.nan)
     return {
         "lat": lat[located], "lon": lon[located],
         "row": srow[located], "col": scol[located],
         "valid": valid[located], "value": value[located],
         "valid_source": valid_source,
+        "indices": {k: v[located] for k, v in indices.items()},
+        "flags": {k: v[located] for k, v in flags.items()},
     }
 
 
@@ -268,7 +278,7 @@ def _neighbour_vectors(x, y, srow, scol):
 
 def _reduce(parts):
     """Combine per-chunk cell records: sums add, nearest keeps the closest pixel."""
-    key = np.concatenate([p["key"] for p in parts])
+    key = np.concatenate([p["key"] for p in parts]) if parts else np.zeros(0, dtype=np.int64)
     if key.size == 0:
         return {name: np.zeros(0, dtype=dtype) for name, dtype in
                 (("key", np.int64), ("weight", float), ("valid_weight", float), ("value_sum", float),
@@ -347,6 +357,19 @@ def grid_path(native_dir):
     return native_dir.with_name(native_dir.name[: -len("_native")] + "_nasa_grid.nc")
 
 
+def scene_native_files(folder, scene_id):
+    """Select only this scene's native windows from a shared date folder."""
+    sid = str(uuid.UUID(str(scene_id)))
+    return sorted(Path(folder).glob(f"{sid}_*_lakepixels.nc"))
+
+
+def scene_grid_path(folder, scene_id, config_hash):
+    from ..common import path_component
+    sid = str(uuid.UUID(str(scene_id)))
+    config = path_component(config_hash, "processing configuration")
+    return Path(folder) / f"{sid}_{config}_nasa_grid.nc"
+
+
 def utc_date(start):
     stamp = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
     if stamp.tzinfo is None:
@@ -354,25 +377,30 @@ def utc_date(start):
     return stamp.astimezone(timezone.utc).date()
 
 
-def write_scene_grid(native_dir, scene, out_path=None):
-    """Write <scene>_<hash>_nasa_grid.nc beside the native folder; returns a summary."""
+def write_scene_grid(native_dir, scene, out_path=None, *, native_files=None):
+    """Write one scene grid; explicit native_files isolates scenes sharing a date folder."""
     import netCDF4
     from ..common import digest, sync_dir
+    from .features import INDICES, FLAGS, maximum_pixels_to_cells, reduce_maximum
 
     native_dir = Path(native_dir)
-    files = sorted(native_dir.glob("*.nc"))
+    files = sorted(map(Path, native_files)) if native_files is not None else sorted(native_dir.glob("*.nc"))
     if not files:
         raise ValueError(f"No native lake-pixel files in {native_dir}")
     out_path = Path(out_path) if out_path else grid_path(native_dir)
-    parts, sources, n_pixels, valid_sources = [], [], 0, set()
+    parts, maximum_parts, sources, n_pixels, valid_sources = [], [], [], 0, set()
     for path in files:  # one file per processing window; pixel neighbours never cross files
         pixels = native_pixels(path)
         n_pixels += int(pixels["lat"].size)
         valid_sources.add(pixels["valid_source"])
         if pixels["lat"].size:
             parts.append(pixels_to_cells(pixels))
+            maximum_parts.append(maximum_pixels_to_cells(pixels))
         sources.append({"file": path.name, "sha256": digest(path)})
     cells = _reduce(parts) if parts else _reduce([])
+    maximum = reduce_maximum(maximum_parts)
+    if not np.array_equal(cells["key"], maximum["key"]):
+        raise ValueError("Maximum and reference mappings use different cell footprints")
     row, col = key_cell(cells["key"])
     with np.errstate(invalid="ignore", divide="ignore"):
         area_value = np.where(cells["valid_weight"] > 0, cells["value_sum"] / cells["valid_weight"], np.nan)
@@ -392,7 +420,8 @@ def write_scene_grid(native_dir, scene, out_path=None):
         "subsamples_per_axis": SUBSAMPLES,
         "value_definition": VALUE_DEFINITION,
         "valid_definition": "; ".join(sorted(valid_sources)) or VALID_DEFINITION,
-        "methods": "area: area-weighted mean of overlapping valid pixels; nearest: overlapping pixel closest to cell centre",
+        "methods": "max: highest overlapping valid value independently per index (daily default); area/nearest retained for reference",
+        "cloud_diagnostic": "cloud_excluded_any: at least one overlapping native observation has cloud_excluded_mask=1; not a whole-cell cloud classification",
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "software_version": __import__("cyanotrend").__version__,
     }
@@ -412,6 +441,10 @@ def write_scene_grid(native_dir, scene, out_path=None):
                 ("CI_cyano_nearest", "f4", cells["near_value"], "CI_cyano of the nearest overlapping pixel", "1"),
                 ("nearest_distance", "f4", np.sqrt(cells["near_d2"]), "distance from nearest pixel centre to cell centre", "m"),
             ]
+            spec += [(f"{name}_maximum", "f4", maximum[name],
+                      f"highest valid overlapping {name} value within this scene", "1") for name in INDICES]
+            spec += [(f"{name}_any", "u1", maximum[name].astype(np.uint8),
+                      f"at least one overlapping native observation is {name}", "1") for name in FLAGS]
             for name, dtype, values, long_name, units in spec:
                 var = ds.createVariable(name, dtype, ("cell",), zlib=True, complevel=4, shuffle=True, fill_value=False)
                 var.setncatts({"long_name": long_name, "units": units})
@@ -432,6 +465,7 @@ def write_scene_grid(native_dir, scene, out_path=None):
 def read_scene_grid(path):
     """Arrays sorted by cell key, plus attributes; refuses other grids or schemas."""
     import netCDF4
+    from .features import INDICES, FLAGS
 
     with netCDF4.Dataset(path) as ds:
         attrs = {k: ds.getncattr(k) for k in ds.ncattrs()}
@@ -448,6 +482,8 @@ def read_scene_grid(path):
 
         data = {name: np.asarray(get(name)) for name in
                 ("row", "col", "valid_area", "CI_cyano_area", "valid_nearest", "CI_cyano_nearest")}
+        maximum = {name: np.asarray(get(f"{name}_maximum")) for name in INDICES}
+        flags = {name: np.asarray(get(f"{name}_any")) == 1 for name in FLAGS}
     key = cell_key(data["row"], data["col"])
     order = np.argsort(key, kind="stable")
     return {
@@ -457,4 +493,8 @@ def read_scene_grid(path):
         "area_value": data["CI_cyano_area"].astype(float)[order],
         "nearest_valid": (data["valid_nearest"] == 1)[order],
         "nearest_value": data["CI_cyano_nearest"].astype(float)[order],
+        "max_valid": np.isfinite(maximum["CI_cyano"])[order],
+        "max_value": maximum["CI_cyano"].astype(float)[order],
+        "maximum": {k: v.astype(float)[order] for k, v in maximum.items()},
+        "flags": {k: v[order] for k, v in flags.items()},
     }

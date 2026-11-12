@@ -25,6 +25,7 @@ class Service(unittest.TestCase):
                     "id": str(uuid.uuid4()),
                     "name": "S3A_TEST",
                     "start": "2024-01-01T00:00:00Z",
+                    "output_region": {"country": "USA", "state_id": "MI", "state_name": "Michigan"},
                 }
                 for _ in range(6)
             ]

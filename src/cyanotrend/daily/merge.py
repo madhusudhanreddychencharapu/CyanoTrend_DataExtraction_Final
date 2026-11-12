@@ -11,14 +11,16 @@ For each UTC date:
    Any item still to come -> no row; the lake waits (listed in the manifest).
 4. Merge. The lake's cells are the NASA grid cells whose centres lie inside
    the HydroLAKES polygon (the rule NASA counts use). Each cell keeps the
-   highest CI_cyano among the scenes with a valid view of it; a cell is
-   "no valid data" only when no scene had a valid view.
-5. Write daily_lakes.csv, day_manifest.json and daily_grid.nc under
-   <output>/daily/USA/<year>/<month>/<date>/. Each run rebuilds the date's
-   files from the saved scene grid files; rows are replaced, never appended.
+   highest valid value for each index independently, after maximum footprint
+   mapping within each scene. An index has no valid data only when no scene
+   supplied a valid value for it.
+5. Publish date-named lakes CSV, manifest JSON and grid NC under
+   <output>/daily/<country>/<pour-point state>/<year>/<month>/<day>/.
+   Replace this date in the daily master and preserve its previous version.
 
-This module only reads processed results. It never processes or queues scenes,
-so running it again with nothing new gives the same files.
+This module reads processed native/grid results and the original NASA daily
+product. It never processes or queues scenes. Publication metadata timestamps
+can change on reruns even when numerical inputs and outputs are unchanged.
 """
 from __future__ import annotations
 
@@ -32,11 +34,13 @@ import uuid
 
 import numpy as np
 
-from ..common import atomic_json, digest, file_lock, sync_dir, utcnow
+from ..common import dated_region_folder, digest, file_lock, utcnow
 from ..ledger import Ledger
 from . import grid as nasa_grid
+from .features import INDICES, FLAGS, summary as index_summary
+from ..schema import NASA_DETECTION_COLUMN
 
-SCHEMA = "cyanotrend-daily-1"
+SCHEMA = "cyanotrend-daily-2"
 DONE = {"done", "skipped_no_lakes"}
 WAITING = {"queued", "running", "retry", "publishing"}
 TIMELINESS_RANK = {"NT": 0, "ST": 1, "NR": 2}
@@ -50,10 +54,18 @@ CSV_COLUMNS = [
     "date_utc", "Hylak_id", "Lake_name", "Lake_area_km2", "states", "state_ids",
     "latitude", "longitude", "day_status", "within_pass_method", "satellites",
     "scenes_used", "scene_ids", "scene_names", "failed_or_unavailable_scenes",
-    "Lake_cells", "Non_detectable_cells", "CI_cyano_detectable_cells",
-    "No_valid_data_cells", "Cells_valid_in_two_or_more_scenes",
-    "CI_cyano_max", "CI_cyano_mean_detectable",
+    "Lake_cells",
+    "primary_retained_cells",
+    "Cloud_excluded_any_scene_cells", "Cloud_excluded_with_valid_daily_CI_cells",
+    "Cloud_excluded_without_valid_daily_CI_cells",
+    "ci_input_valid_cells", "ci_candidate_cells",
+    "CI_cyano_detectable_cells", "Non_detectable_cells", "No_valid_data_cells",
+    "Cells_valid_in_two_or_more_scenes", NASA_DETECTION_COLUMN,
 ]
+for _index in INDICES:
+    CSV_COLUMNS.extend(f"{_index}_{stat}" for stat in ("valid_cells", "mean", "median", "p10", "p90", "max"))
+    if _index == "CI_cyano":
+        CSV_COLUMNS.append("CI_cyano_mean_detectable")
 
 
 def detection_limit():
@@ -70,8 +82,8 @@ def dates(start, end):
         first += timedelta(days=1)
 
 
-def day_folder(workspace, day):
-    return workspace.output / "daily" / "USA" / f"{day.year:04d}" / f"{day.month:02d}" / day.isoformat()
+def day_folder(workspace, day, country, state):
+    return dated_region_folder(workspace.output / "daily", country, state, day)
 
 
 def acquisition(scene):
@@ -97,7 +109,7 @@ def ci_to_dn(value, valid):
     return dn
 
 
-def merge_cells(lake_keys, contributions, method):
+def merge_cells(lake_keys, contributions, method, index="CI_cyano"):
     """Per cell: highest valid CI_cyano over scenes; invalid only if no scene was valid."""
     if method not in nasa_grid.METHODS:
         raise ValueError(f"Unknown within-pass method: {method}")
@@ -110,12 +122,31 @@ def merge_cells(lake_keys, contributions, method):
             continue
         pos = np.minimum(np.searchsorted(keys, lake_keys), keys.size - 1)
         hit = keys[pos] == lake_keys
-        values = np.where(hit, data[f"{method}_value"][pos], np.nan)
-        ok = hit & data[f"{method}_valid"][pos] & np.isfinite(values)
+        if method == "max":
+            values = np.where(hit, data["maximum"][index][pos], np.nan)
+            ok = hit & np.isfinite(values)
+        else:
+            if index != "CI_cyano":
+                raise ValueError("All-index daily statistics require maximum mapping")
+            values = np.where(hit, data[f"{method}_value"][pos], np.nan)
+            ok = hit & data[f"{method}_valid"][pos] & np.isfinite(values)
         seen += ok.astype(np.uint8)
         best = np.where(ok & (values > best), values, best)
     valid = seen > 0
     return valid, np.where(valid, best, np.nan), seen
+
+
+def merge_flags(lake_keys, contributions):
+    result = {name: np.zeros(lake_keys.size, dtype=bool) for name in FLAGS}
+    for data in contributions:
+        keys = data["key"]
+        if not keys.size or not lake_keys.size:
+            continue
+        pos = np.minimum(np.searchsorted(keys, lake_keys), keys.size - 1)
+        hit = keys[pos] == lake_keys
+        for name in FLAGS:
+            result[name] |= hit & data["flags"][name][pos]
+    return result
 
 
 def conus_lakes(workspace, lake_region):
@@ -163,20 +194,24 @@ class LakeCells:
 
 
 def ensure_scene_grid(workspace, scene):
-    """Path of the scene's NASA-grid file; builds it from the native folder if missing."""
+    """Find or rebuild one scene's grid from its native files in the owning state's folder."""
     folder = workspace.archive(scene).parent
-    natives = nasa_grid.native_dirs(folder, scene["id"])
-    if not natives:
-        return None, f"no native lake-pixel folder beside {workspace.archive(scene).name}"
-    native = natives[-1]
-    path = nasa_grid.grid_path(native)
+    files = nasa_grid.scene_native_files(folder, scene["id"])
+    if not files:
+        return None, f"no native lake-pixel files beside {workspace.archive(scene).name}"
+    configs = {p.stem.rsplit("_", 2)[1] for p in files}
+    if len(configs) != 1:
+        raise ValueError(f"Multiple native processing configurations for scene {scene['id']}")
+    path = nasa_grid.scene_grid_path(folder, scene["id"], configs.pop())
     if path.exists():
         try:
-            nasa_grid.read_scene_grid(path)
+            data = nasa_grid.read_scene_grid(path)
+            if data["attrs"].get("scene_id") != scene["id"]:
+                raise ValueError("Scene grid identity mismatch")
             return path, None
         except (ValueError, KeyError, OSError):
             pass  # outdated or damaged: rebuild below
-    nasa_grid.write_scene_grid(native, scene, path)
+    nasa_grid.write_scene_grid(folder, scene, path, native_files=files)
     return path, None
 
 
@@ -227,6 +262,18 @@ def _write_daily_grid(path, day, method, cells):
                 var = ds.createVariable(name, dtype, ("cell",), zlib=True, complevel=4, shuffle=True, fill_value=False)
                 var.long_name = long_name
                 var[:] = values
+            for index in INDICES:
+                if index == "CI_cyano":
+                    continue  # Already written with its existing name above.
+                values = np.concatenate([c[5][index] for c in cells]) if cells else np.zeros(0)
+                var = ds.createVariable(index, "f4", ("cell",), zlib=True, complevel=4, fill_value=False)
+                var.long_name = f"daily maximum valid {index}; independent of the scene selected for other indices"
+                var[:] = values
+            for name in FLAGS:
+                values = np.concatenate([c[6][name] for c in cells]) if cells else np.zeros(0, dtype=bool)
+                var = ds.createVariable(f"{name}_any", "u1", ("cell",), zlib=True, complevel=4, fill_value=False)
+                var.long_name = f"at least one overlapping observation in the day is {name}"
+                var[:] = values.astype(np.uint8)
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
@@ -304,7 +351,8 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         if sid in grids:
             return grids[sid]
         row = next((r for r in processed if r["id"] == sid), None)
-        scene = scenes[sid]
+        # Catalogue records do not carry the original plan's file ownership.
+        scene = json.loads(row["scene_json"]) if row is not None else scenes[sid]
         if row is not None and (row["status"] == "skipped_no_lakes" or row["stage"] == "complete_no_native"):
             grids[sid] = ("empty", None)
             grid_files[sid] = {"status": "no lake pixels in scene"}
@@ -351,10 +399,15 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         if failed:
             partial.append({**describe, "failed_or_unavailable_scenes": failed})
         lake_keys = lake_cells.get(lake.Hylak_id, lake.geometry)
-        valid, value, seen = merge_cells(lake_keys, contributions, method)
+        merged = {index: merge_cells(lake_keys, contributions, method, index) for index in INDICES}
+        valid, value, seen = merged["CI_cyano"]
+        daily_indices = {index: data[1] for index, data in merged.items()}
+        daily_flags = merge_flags(lake_keys, contributions)
+        cloudy = daily_flags["cloud_excluded"]
         detected = valid & (value >= limit)
         dn = ci_to_dn(value, valid)
-        cells.append((int(lake.Hylak_id), lake_keys, dn, value.astype(np.float32), seen))
+        cells.append((int(lake.Hylak_id), lake_keys, dn, value.astype(np.float32), seen,
+                      daily_indices, daily_flags))
         satellites = sorted({str(scenes[s].get("satellite", "")) for s in used})
         rows.append({
             "date_utc": day.isoformat(),
@@ -373,22 +426,37 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
             "scene_names": ";".join(sorted(names[s] for s in used)),
             "failed_or_unavailable_scenes": ";".join(sorted(failed)),
             "Lake_cells": int(lake_keys.size),
+            "primary_retained_cells": int(daily_flags["primary_retained"].sum()),
+            "Cloud_excluded_any_scene_cells": int(cloudy.sum()),
+            "Cloud_excluded_with_valid_daily_CI_cells": int((cloudy & valid).sum()),
+            "Cloud_excluded_without_valid_daily_CI_cells": int((cloudy & ~valid).sum()),
+            "ci_input_valid_cells": int(valid.sum()),
+            "ci_candidate_cells": int(merged["CI"][0].sum()),
             "Non_detectable_cells": int((valid & ~detected).sum()),
             "CI_cyano_detectable_cells": int(detected.sum()),
             "No_valid_data_cells": int((~valid).sum()),
             "Cells_valid_in_two_or_more_scenes": int((seen >= 2).sum()),
-            "CI_cyano_max": float(np.nanmax(value)) if valid.any() else "",
+            **{f"{index}_{stat}": v for index, values in daily_indices.items()
+               for stat, v in index_summary(values).items()},
             "CI_cyano_mean_detectable": float(value[detected].mean()) if detected.any() else "",
         })
     rows.sort(key=lambda r: r["Hylak_id"])
+    nasa_metadata = {}
+    if rows:
+        from ..nasa_cyan import measure_daily
+        measurements, nasa_metadata = measure_daily(
+            scope, day.isoformat() + "T00:00:00Z", workspace.references / "obpg_cyan",
+            [r["Hylak_id"] for r in rows],
+        )
+        lookup = measurements.set_index("Hylak_id")[NASA_DETECTION_COLUMN]
+        import pandas as pd
+        for row in rows:
+            value = lookup.loc[row["Hylak_id"]]
+            row[NASA_DETECTION_COLUMN] = "" if pd.isna(value) else int(value)
     caps = sorted(p for p, ids in capped_plans.items() if ids & {r["id"] for r in day_rows})
     if caps:
         warnings.append("Plans " + ", ".join(caps) + " used --max-scenes; capped catalogue results can leave lakes waiting")
 
-    folder = day_folder(workspace, day)
-    folder.mkdir(parents=True, exist_ok=True)
-    _write_csv(folder / "daily_lakes.csv", rows)
-    _write_daily_grid(folder / "daily_grid.nc", day, method, cells)
     acquisition_list = []
     for key in sorted(acquisitions):
         info = acquisitions[key]
@@ -405,7 +473,7 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         "waiting": len(waiting),
         "unavailable": len(unavailable),
     }
-    atomic_json(folder / "day_manifest.json", {
+    manifest = {
         "schema": SCHEMA,
         "date_utc": day.isoformat(),
         "created_utc": utcnow(),
@@ -416,7 +484,9 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
             "partial": "nothing still to come; one or more checklist scenes permanently failed or without a grid file",
             "waiting": "a checklist scene is not processed yet; no row is written",
             "lake_cells": "NASA grid cells whose centres lie inside the HydroLAKES polygon",
-            "daily_value": "per cell, highest valid CI_cyano over the lake's scenes; no valid data only if no scene was valid",
+            "daily_value": "independent maximum valid value per index within each scene and across all selected acquisitions of the UTC day",
+            "statistics": "per lake, finite daily cell maxima; CI uses candidate values, CI_cyano includes valid non-detections, other indices use their existing valid masks",
+            "cloud_counts": "any cloud_excluded_mask observation overlapping a cell, split by availability of valid daily CI; not proof that cloud alone caused missing data",
             "detection": f"CI_cyano >= {limit:.6g} (NASA V6 DN 1)",
         },
         "grid": nasa_grid.grid_definition(),
@@ -428,18 +498,24 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         "waiting_lakes": waiting,
         "unavailable_lakes": unavailable,
         "warnings": warnings,
-    })
-    sync_dir(folder)
+        "nasa_cyan_comparison": nasa_metadata,
+    }
+    from .publication import publish_day
+    lake_scene_ids = {
+        int(lake.Hylak_id): {sid for key in cover[i] for sid in acquisitions[key]["ids"]}
+        for i, lake in enumerate(scope.itertuples(index=False))
+    }
+    folders = publish_day(workspace, day, rows, cells, scope, manifest, lake_scene_ids)
     return {"date": day.isoformat(), "processed_scenes": len(processed), **counts,
-            "folder": str(folder), "warnings": len(warnings)}
+            "folders": folders, "warnings": len(warnings)}
 
 
-def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None):
+def run_daily(workspace, start, end, method="max", catalogue=None, lakes=None):
     """Merge every date in [start, end]; returns one summary per date."""
     from .. import references
 
-    if method not in nasa_grid.METHODS:
-        raise ValueError(f"--method must be one of {', '.join(nasa_grid.METHODS)}")
+    if method != "max":
+        raise ValueError("Daily all-index statistics use --method max")
     days = list(dates(start, end))
     if catalogue is None:
         from ..core.catalogue import search_olci_l1_catalog as catalogue
@@ -461,9 +537,12 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None):
         if day in wanted:
             rows_by_day.setdefault(day, []).append(r)
     results, ok = [], True
-    if not rows_by_day:
-        return {"ok": True, "days": [{"date": d.isoformat(), "result": "no scenes in the ledger"} for d in days]}
     with file_lock(workspace.output / "daily" / ".daily.lock"):
+        from .publication import DailyPublisher
+        publisher = DailyPublisher(workspace, CSV_COLUMNS)
+        publisher.recover()
+        if not rows_by_day:
+            return {"ok": True, "days": [{"date": d.isoformat(), "result": "no scenes in the ledger"} for d in days]}
         if lakes is None:
             lakes = conus_lakes(workspace, meta.get("lake_region", "WORLD"))
         cache = LakeCells(workspace, references.manifest(workspace)["reference_id"])
@@ -471,8 +550,11 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None):
             try:
                 results.append(merge_day(workspace, ledger, lakes, day, method, catalogue,
                                          rows_by_day, status_of, cache, capped))
-            except Exception as exc:  # this date's files stay as they were
+            except Exception as exc:
                 from ..telemetry import redact
                 ok = False
                 results.append({"date": day.isoformat(), "error": redact(f"{type(exc).__name__}: {exc}")[:1000]})
+                if publisher.journal.exists():
+                    # Finish this interrupted publication on restart before starting another date.
+                    break
     return {"ok": ok, "within_pass_method": method, "days": results}

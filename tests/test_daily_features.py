@@ -1,4 +1,4 @@
-"""Independent cell maxima, cloud diagnostics, NASA lookup and archive contract."""
+"""Independent bin values per index, cloud diagnostics, NASA lookup and archive contract."""
 import csv
 import json
 from unittest.mock import patch
@@ -9,27 +9,37 @@ import pandas as pd
 import pytest
 
 from cyanotrend.daily import grid as g
-from cyanotrend.daily.features import INDICES, maximum_pixels_to_cells, summary
+from cyanotrend.daily.features import INDICES, summary
 from cyanotrend.daily.merge import CSV_COLUMNS, merge_cells, merge_flags, run_daily
 from cyanotrend.ledger import Ledger
 from cyanotrend.schema import NASA_DETECTION_COLUMN
-from test_daily import (_pixels, _write_native, _scene, _footprint, _block, _lakes,
-                        _read, DAY, LAKE_A, workspace)
+from test_daily import (_pixels, _lattice, _interior, _write_native, _scene, _footprint, _lakes,
+                        _read, DAY, LAKE_A, ROW, workspace)
 
 
-def test_maximum_overlapping_pixels_is_not_an_average_and_preserves_negatives():
-    pixels = _pixels([3070, 3070], [11845, 11846], [1.0, 3.0], shift=(150, 0))
-    pixels["indices"] = {"CI": np.array([1., 3.]), "CI_cyano": np.array([1., 3.]),
-                         "NDCI": np.array([-0.2, -0.8]), "MPH": np.array([4., np.nan]),
-                         "FAI": np.array([np.nan, np.nan])}
-    pixels["flags"] = {"primary_retained": np.array([True, True]),
-                       "cloud_excluded": np.array([False, True])}
-    result = maximum_pixels_to_cells(pixels)
-    i = np.searchsorted(result["key"], g.cell_key(3070, 11846))
-    assert result["CI"][i] == 3.0
-    assert result["NDCI"][i] == -0.2
-    assert result["MPH"][i] == 4.0
-    assert np.isnan(result["FAI"][i]) and result["cloud_excluded"][i]
+def test_overlapping_pixels_are_area_weighted_not_maximum_and_negatives_survive():
+    lattice = _lattice(ROW, 4, LAKE_A[2], 8, margin=0, east=0.0)
+    row = lattice["i"]
+    pixels = _pixels(lattice, np.array([1.0, 3.0, 5.0, 7.0])[row])
+    pixels["indices"] = {"CI": np.array([1., 3., 5., 7.])[row], "CI_cyano": np.array([1., 3., 5., 7.])[row],
+                         "NDCI": np.array([-0.2, -0.8, -0.4, -0.6])[row],
+                         "MPH": np.array([4., np.nan, np.nan, np.nan])[row],
+                         "FAI": np.full(row.size, np.nan)}
+    pixels["flags"] = {"primary_retained": np.ones(row.size, bool),
+                       "cloud_excluded": np.array([False, True, False, False])[row]}
+    # Half a bin north: bins of row ROW+1 are half pixel row 0 and half pixel row 1.
+    shifted = dict(lattice, lat=lattice["lat"] + 0.5 * 180.0 / g.N_ROWS)
+    pixels["lat"] = shifted["lat"]
+    bins = g.pixels_to_bins(pixels)
+    means = g.area_means(bins)
+    inside, _ = _interior(bins, lattice, [ROW + 1])
+    assert inside.sum() >= 4
+    assert np.allclose(means["CI"][inside], 2.0, rtol=1e-3)  # an average, not the maximum 3.0
+    assert np.allclose(means["NDCI"][inside], -0.5, rtol=1e-3)  # negative values are kept
+    assert np.allclose(means["MPH"][inside], 4.0)  # only the valid pixel counts
+    assert np.isnan(means["FAI"][inside]).all()
+    assert bins["cloud_excluded"][inside].all() and bins["primary_retained"][inside].all()
+    assert not bins["cloud_excluded"][_interior(bins, lattice, [ROW + 3])[0]].any()
 
 
 def test_daily_maximum_uses_all_scenes_independently_and_does_not_count_no_view_as_cloud():
@@ -38,23 +48,23 @@ def test_daily_maximum_uses_all_scenes_independently_and_does_not_count_no_view_
     for ci, ndci, cloud in [([1, np.nan, np.nan], [-0.1, np.nan, np.nan], [False, True, True]),
                             ([3, 2, np.nan], [-0.7, -0.4, np.nan], [True, False, False]),
                             ([2, 5, np.nan], [-0.5, -0.2, np.nan], [False, False, False])]:
-        scenes.append({"key": keys[:3], "maximum": {"CI_cyano": np.array(ci), "NDCI": np.array(ndci)},
+        scenes.append({"key": keys[:3], "values": {"CI_cyano": np.array(ci), "NDCI": np.array(ndci)},
                        "flags": {"primary_retained": np.isfinite(ci), "cloud_excluded": np.array(cloud)}})
-    valid, values, seen = merge_cells(keys, scenes, "max")
+    valid, values, seen = merge_cells(keys, scenes)
     assert values[:2].tolist() == [3, 5]
     assert seen.tolist() == [3, 2, 0, 0]
-    _, ndci, _ = merge_cells(keys, scenes, "max", "NDCI")
+    _, ndci, _ = merge_cells(keys, scenes, "NDCI")
     assert ndci[:2].tolist() == [-0.1, -0.2]
     clouds = merge_flags(keys, scenes)["cloud_excluded"]
     assert clouds.tolist() == [True, True, True, False]
     assert (clouds & valid).sum() == 2 and (clouds & ~valid).sum() == 1
-    assert summary(values)["mean"] == 4  # Mean of cell maxima, not max(scene means).
+    assert summary(values)["mean"] == 4  # Mean of bin maxima, not max(scene means).
     assert summary([np.nan])["valid_cells"] == 0 and summary([np.nan])["mean"] == ""
 
 
 def test_columns_preserve_first_sixteen_and_follow_scene_index_order():
     assert CSV_COLUMNS[:16] == [
-        "date_utc", "Hylak_id", "Lake_name", "Lake_area_km2", "states", "state_ids",
+        "date_solar", "Hylak_id", "Lake_name", "Lake_area_km2", "states", "state_ids",
         "latitude", "longitude", "day_status", "within_pass_method", "satellites",
         "scenes_used", "scene_ids", "scene_names", "failed_or_unavailable_scenes", "Lake_cells"]
     assert "native_lake_pixels" not in CSV_COLUMNS
@@ -74,7 +84,7 @@ def test_daily_outputs_include_independent_indices_cloud_counts_and_one_nasa_cou
     ledger.enqueue({"id": "p", "created": "now", "reference_id": "ref", "selection": {}, "scenes": scenes},
                    ws.output / "plans/p.json")
     for i, scene in enumerate(scenes):
-        _write_native(ws, scene, _block(*LAKE_A, lambda r, c: (i + 1) * 0.001))
+        _write_native(ws, scene, [(LAKE_A, lambda r, c, i=i: (i + 1) * 0.001)])
         native = ws.archive(scene).parent / f"{scene['id']}_full_cfg_lakepixels.nc"
         with netCDF4.Dataset(native, "a") as ds:
             ds["NDCI"][:] = -0.2 if i == 0 else -0.8
@@ -95,8 +105,9 @@ def test_daily_outputs_include_independent_indices_cloud_counts_and_one_nasa_cou
     rows, manifest, folder = _read(ws)
     row = rows[101]
     assert row[NASA_DETECTION_COLUMN] == "17"
-    assert row["within_pass_method"] == "max"
-    assert row["Cloud_excluded_any_scene_cells"] == row["Cloud_excluded_with_valid_daily_CI_cells"] == "25"
+    assert row["within_pass_method"] == "area"
+    assert int(row["Lake_cells"]) > 20
+    assert row["Cloud_excluded_any_scene_cells"] == row["Cloud_excluded_with_valid_daily_CI_cells"] == row["Lake_cells"]
     assert row["Cloud_excluded_without_valid_daily_CI_cells"] == "0"
     assert float(row["NDCI_mean"]) == pytest.approx(-0.2)
     assert float(row["MPH_max"]) == pytest.approx(0.6)

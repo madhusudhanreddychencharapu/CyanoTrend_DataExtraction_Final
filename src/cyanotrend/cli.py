@@ -99,15 +99,15 @@ def parser():
     )
     q = sub.add_parser(
         "daily",
-        help="Merge processed S3A/S3B scenes per UTC day and lake on the NASA CyAN 300 m grid",
+        help="Merge processed S3A/S3B scenes per local solar date and lake on ISIN bins (69120 rows, about 290 m)",
     )
-    q.add_argument("--start", required=True, help="First UTC date, YYYY-MM-DD (inclusive)")
-    q.add_argument("--end", required=True, help="Last UTC date, YYYY-MM-DD (inclusive)")
+    q.add_argument("--start", required=True, help="First solar date, YYYY-MM-DD (inclusive)")
+    q.add_argument("--end", required=True, help="Last solar date, YYYY-MM-DD (inclusive)")
     q.add_argument(
         "--method",
-        choices=["max"],
-        default="max",
-        help="Maximum valid overlapping value within each scene and across the day, independently per index",
+        choices=["area"],
+        default="area",
+        help="Area-weighted binning of pixels into ISIN bins within each scene; the daily value is the maximum over scenes, independently per index",
     )
     sub.add_parser("status", help="Unique-scene totals and active processing stages")
     sub.add_parser("retry-failed", help="Requeue all failed scenes with three additional attempts; preserve logs and attempt history")

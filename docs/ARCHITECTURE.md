@@ -128,41 +128,65 @@ cleanup. Discovery counts cover saved plans, not undiscovered worldwide inventor
 ## 8. Day stage — `daily/`, `cyanotrend daily`
 
 Scene processing stays independent per scene. The day stage merges processed
-scenes per UTC date and lake, the way NASA CyAN builds its daily product.
+scenes per local solar date and lake on one global grid for every country: NASA's
+Level-3 integerized sinusoidal (ISIN) bins at 69120 rows (bins about 290 x 290 m,
+equal in area to 0.005%). NASA CyAN is used only to check results, never as the
+method.
 
-*NASA grid file per scene* (`daily/grid.py`). After packaging, the worker places
-the scene's native lake pixels on NASA CyAN's CONUS grid and writes
-`<scene>_<hash>_nasa_grid.nc` beside the ZIP and the native
-`<scene>_<window>_<hash>_lakepixels.nc` files. The lattice is
-NASA's: EPSG:5070, 300 m cells, edges taken from NASA tile 7_5
-(upper-left 1,034,402.95 m, 914,826.27 m). Each pixel is spread over its footprint
-(spanned by its neighbouring pixels). The daily stage now uses the independent
-maximum valid overlapping value for each index. Prior CI_cyano area/nearest
-fields remain for reference. This is the user-selected maximum rule, not a claim
-of reproducing NASA within-scene interpolation. The file is not inside the ZIP, so
-archive checksums are unchanged. If a grid file is absent or unreadable, `daily`
-rebuilds it using only that scene's native lake-pixel files in the day folder.
-Other scenes' files and NASA grid files are excluded from those inputs.
+*Scene bin file per scene* (`daily/grid.py`). After packaging, the worker bins the
+scene's native lake pixels and writes `<scene>_<hash>_isin_grid.nc` beside the
+ZIP and the native `<scene>_<window>_<hash>_lakepixels.nc` files. Binning is
+area-weighted: each pixel is spread over its footprint (the parallelogram spanned by its
+neighbouring pixels) and shared among the bins it overlaps in proportion to the exact
+overlap area (Green's theorem on the footprint polygon; no sample points, no resampling).
+The weights of one pixel add up to its ground area. A bin's value for each index (CI,
+CI_cyano, NDCI, MPH, FAI) is the area-weighted mean of the valid pixels that
+overlap it; invalid pixels do not dilute it, and a bin with no valid pixel is
+"no data". The file also keeps each bin's footprint area, valid area per index
+and the primary-retained/cloud-excluded flags. Bins are not a regular raster
+(neighbouring rows do not line up), so the file lists bins: bin number (NASA
+1-based numbering), row, column, bin-centre latitude/longitude and bin area.
+Bin numbers depend only on latitude/longitude, so the same bin is the same
+piece of ground in every scene, in any country, including across the 180
+degree meridian. The file is not inside the ZIP, so archive checksums are
+unchanged. If it is absent or unreadable, `daily` rebuilds it using only that
+scene's native lake-pixel files in the day folder.
 
-*Daily merge* (`daily/merge.py`). For each date: the catalogue gives every S3A/S3B
-scene; a lake's checklist is the scenes touching it (NR/NT versions of one
+*Daily merge* (`daily/merge.py`). The date of a record is the lake's local solar date: scene
+start (UTC) plus the lake's longitude / 15 hours (the pour-point longitude). Sentinel-3 passes
+at about 10:00 local time, so there is one pass per lake per date everywhere, and near 150 E
+the UTC date of the pass is the day before the solar date. For each solar date: the catalogue
+gives the S3A/S3B scenes of the UTC days it can reach (one or two); a lake's checklist is the
+scenes touching it whose solar date at the lake is the date (NR/NT versions of one
 acquisition count once). The ledger ticks the list. Complete lakes are merged;
 lakes whose missing scenes all failed permanently are merged and flagged
 `partial`; lakes still waiting get no row and are listed in the manifest. A lake's
-cells are the NASA cells whose centres lie inside its polygon (the NASA count
-rule); each index keeps its highest valid value over the lake's scenes and is
-"no valid data" only when no scene saw it validly. Calculated rows/cells are
-partitioned by each lake's existing HydroLAKES pour-point state assignment:
-`<output>/daily/USA/<state>/YYYY/MM/DD/YYYY-MM-DD_lakes.csv`, with
-`YYYY-MM-DD_manifest.json` and `YYYY-MM-DD_grid.nc` beside it. The CSV retains
-all touching states in its metadata; the lake's results occur in only one folder.
-Each manifest filters its checklist and waiting lakes by that state, and labels
-shared warnings as date-wide. No numerical merge rule changes with partitioning.
+bins are the ISIN bins whose centres lie inside its polygon; each index keeps
+the highest scene value of each bin (the maximum over the lake's scenes of the
+scenes' area-weighted means) and is "no valid data" only when no scene saw it
+validly. The number of scenes with a valid view of each bin is stored
+(`scenes_valid` in the daily NetCDF). `Lake_cells` and the other `*_cells`
+columns count bins. Calculated rows/cells are
+partitioned by country and state for every country:
+`<output>/daily/<country>/<state>/YYYY/MM/DD/YYYY-MM-DD_lakes.csv`, with
+`YYYY-MM-DD_manifest.json` and `YYYY-MM-DD_grid.nc` beside it. A lake that borders several
+states or countries (Lake Michigan, Lake Erie) has exactly one record per date, under the
+region whose plan processed it first (`daily/regions.py`): (1) the earliest-created plan whose
+country/state touches the lake and that listed one of its scenes; (2) otherwise the state of
+the HydroLAKES pour point, when unambiguous; (3) otherwise the region of the first plan that
+listed the scene. A scene is stored once, in the first plan's region, so a later plan for a
+neighbouring region (Chicago after Michigan) reuses the processed scene and adds no second
+record. The CSV retains all touching states (`states`, `state_ids`, any country) in its
+metadata. Each manifest filters its checklist and waiting lakes by that region, records the
+basis of each lake's assignment and labels shared warnings as date-wide. No numerical merge
+rule changes with partitioning. The NASA CyAN comparison is by UTC date, so it is filled only
+for lakes whose passes are all on the same UTC date as the solar date (all of the USA
+mainland); otherwise it is blank.
 
 *Daily publication* (`daily/publication.py`). Under the existing daily writer
 lock, all state products for one date are staged with a rebuilt
 `daily/master_merged_daily.csv`. Old rows for that date are replaced; other dates
-are retained, with unique `(date_utc, Hylak_id)` keys. A hard-linked snapshot
+are retained, with unique `(date_solar, Hylak_id)` keys. A hard-linked snapshot
 preserves the prior master for `daily/master_merged_daily_backup.csv`. A journal
 records file hashes and replacements, allowing recovery without rotating the
 backup twice. Obsolete files for the rerun date in the new layout are removed;
@@ -170,22 +194,21 @@ legacy-layout outputs are left untouched. Readers should wait for publication
 to finish: individual files are replaced atomically, not the whole directory
 tree at once. The stage never processes or queues scenes.
 
-Unmatched/ambiguous and foreign-country pour-point folder policies are deferred
-in the project Word note. These unsupported assignments currently raise a
-date-level error before publication; no country/state fallback is implemented.
-The existing lake selection and CONUS grid remain unchanged. Fresh workspaces
-are required for the new layout; existing outputs are not migrated or deleted.
+The daily lake universe is every lake in the workspace's HydroLAKES universe that a processed
+scene touches (the same lakes the worker extracts). The CONUS Albers grid has been removed in
+favour of ISIN bins. Fresh workspaces are required for the new layout; existing outputs are
+not migrated or deleted.
 
 ## Storage boundary
 
-Only final science ZIPs, native lake-pixel files, per-scene NASA grid files,
+Only final science ZIPs, native lake-pixel files, per-scene ISIN bin files,
 daily outputs, master/backup, saved plans, reference data and operational
 records persist. No HTML, gridded map export, raw satellite archive, full L2 file,
 per-scene boundaries or `target_hydrolakes.gpkg` is retained after successful
 publication. Pending products survive publication failure to permit recovery.
 
-The daily CSV now includes independent maximum CI, CI_cyano, NDCI, MPH and FAI
-statistics, cloud-occurrence diagnostics, and one original NASA detection count
+The daily CSV now includes independent CI, CI_cyano, NDCI, MPH and FAI statistics
+of daily bin values (area-weighted within a scene, maximum across scenes), cloud-occurrence diagnostics, and one original NASA detection count
 per lake/date. NASA counts are not summed across scenes; missing coverage leaves
 a blank count. Detailed NASA provenance is retained in daily manifests.
 See [daily columns](DAILY_COLUMNS.md) for the full schema and populations.

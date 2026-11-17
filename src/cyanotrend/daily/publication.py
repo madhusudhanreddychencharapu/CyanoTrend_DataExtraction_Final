@@ -1,4 +1,4 @@
-"""State folders and recoverable publication of daily files and the daily master.
+"""Country/state folders and recoverable publication of daily files and the daily master.
 
 All numerical rows and cells arrive already calculated. This module only groups
 them for storage and replaces a date in the master under the daily writer lock.
@@ -87,7 +87,7 @@ class DailyPublisher:
         stamp = day.isoformat()
         keys = set()
         for row in rows:
-            key = (str(row["date_utc"]), int(row["Hylak_id"]))
+            key = (str(row["date_solar"]), int(row["Hylak_id"]))
             if key[0] != stamp or key in keys:
                 raise ValueError("Daily publication contains a wrong date or duplicate lake/date row")
             keys.add(key)
@@ -100,7 +100,7 @@ class DailyPublisher:
             writer.writeheader()
             previous_keys = set()
             for row in reader:
-                key = (row["date_utc"], int(row["Hylak_id"]))
+                key = (row["date_solar"], int(row["Hylak_id"]))
                 date.fromisoformat(key[0])
                 if key in previous_keys:
                     raise ValueError("Duplicate lake/date key in existing daily master")
@@ -133,26 +133,26 @@ class DailyPublisher:
             files.append({"target": str(relative), "source": str(Path(source).relative_to(self.root)),
                           "sha256": digest(source)})
         sync_dir(staging)
-        atomic_json(self.journal, {"date_utc": stamp, "files": files, "remove": remove,
+        atomic_json(self.journal, {"date_solar": stamp, "files": files, "remove": remove,
                                    "staging": str(staging.relative_to(self.root))})
         self.recover()
 
 
-def publish_day(workspace, day, rows, cells, scope, manifest, lake_scene_ids):
-    """Partition finished results by the existing pour-point state assignment."""
+def publish_day(workspace, day, rows, cells, manifest, lake_scene_ids, region_of):
+    """Partition finished results by the country/state that owns each lake's record.
+
+    region_of: Hylak_id -> {country, state_id, state_name, basis} (see regions.py). Each lake has
+    exactly one region, so a lake shared between states or countries is written once.
+    """
     from .merge import CSV_COLUMNS, _write_csv, _write_daily_grid, day_folder
 
     groups = {}
-    for lake in scope.itertuples(index=False):
-        country = getattr(lake, "country_iso3", "")
-        state = getattr(lake, "state_name", "")
-        if getattr(lake, "admin_match_status", "matched") != "matched" or country != "USA":
-            raise ValueError(
-                f"Daily folder assignment is unresolved for Hylak_id={lake.Hylak_id} "
-                f"(country={country!r}, state={state!r}). Boundary policy remains deferred in the project Word note."
-            )
-        relative = day_folder(workspace, day, country, state).relative_to(workspace.output / "daily")
-        groups.setdefault(relative, {"country": country, "state_name": state, "ids": set()})["ids"].add(int(lake.Hylak_id))
+    for hylak_id, region in region_of.items():
+        relative = day_folder(workspace, day, region["country"], region["state_name"]).relative_to(workspace.output / "daily")
+        group = groups.setdefault(relative, {"country": region["country"], "state_id": region["state_id"],
+                                             "state_name": region["state_name"], "ids": set(), "basis": {}})
+        group["ids"].add(int(hylak_id))
+        group["basis"][str(int(hylak_id))] = region["basis"]
     publisher = DailyPublisher(workspace, CSV_COLUMNS)
     publisher.initialize()
     staging = publisher.stage()
@@ -169,8 +169,12 @@ def publish_day(workspace, day, rows, cells, scope, manifest, lake_scene_ids):
             unavailable = selected(manifest["unavailable_lakes"])
             state_manifest = {
                 **manifest,
-                "output_region": {"country": group["country"], "state_name": group["state_name"],
-                                  "assignment": "HydroLAKES pour point"},
+                "output_region": {
+                    "country": group["country"], "state_id": group["state_id"], "state_name": group["state_name"],
+                    "assignment": "one record per lake, under the region that processed it first "
+                                  "(first_plan_region; else HydroLAKES pour_point; else first_scene_region)",
+                    "lake_basis": group["basis"],
+                },
                 "date_counts": manifest["counts"],
                 "counts": {
                     "lakes_touched_by_processed_scenes": len(ids),

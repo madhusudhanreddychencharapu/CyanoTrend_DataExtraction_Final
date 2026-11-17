@@ -2,32 +2,36 @@
 
 This contract applies to date-named lake CSVs, `master_merged_daily.csv`, and its
 backup. Columns 1–16 retain their names, order and metadata roles. Column 10,
-`within_pass_method`, now records the explicitly requested `max` method.
+`within_pass_method`, now records the `area` method (area-weighted binning).
 There are 58 columns. Native scene formulas, masks and statistics are unchanged.
 
 ## Calculation order
 
 1. Read existing native index values and validity masks. Do not recompute
    reflectance formulas, cloud masks or thresholds.
-2. Use the existing fixed 300 m lattice and sampled native-pixel footprints.
-   When observations overlap one cell, retain each index's maximum valid value
-   independently. Negative valid NDCI/MPH/FAI values are not replaced by zero.
-3. Across all selected acquisitions in the UTC day, retain each index's maximum
-   independently again. The existing acquisition-version selection, lake
+2. Use the fixed global ISIN bin grid (69120 rows, about 290 m, equal-area bins)
+   and exact native-pixel footprints. Each pixel is shared among the bins it
+   overlaps in proportion to the exact overlap area. A bin's value for each index is the
+   area-weighted mean of the valid overlapping pixels; invalid pixels do not
+   dilute it. Negative valid NDCI/MPH/FAI values are not replaced by zero.
+3. Across all selected acquisitions of the solar date, retain each bin's highest
+   scene value for each index, independently. The existing acquisition-version selection, lake
    checklist, complete/partial/waiting rules and lake-cell selection remain.
 4. Calculate count, mean, median, p10, p90 and maximum from each lake's finite
-   daily cell values. These are statistics of cell maxima, not maxima of scene
-   CSV statistics. A cell counts once in each lake's daily statistics.
+   daily cell values. These are statistics of daily bin values (the maximum over
+   scenes of the scene area-weighted means), not maxima of scene CSV statistics.
+   A bin counts once in each lake's daily statistics. "Cells" in column names
+   means ISIN bins.
 
-Footprint overlap retains the existing 6-by-6 sampling approximation; it is not
-an exact polygon-overlap calculation. Prior area/nearest fields remain in scene
-grid files for reference but are not used by the daily command.
+Footprint overlap is exact polygon overlap (Green's theorem); the weights of a pixel add up
+to its ground area. `date_solar` is the lake's local solar date: scene start (UTC) plus the lake
+longitude / 15 hours. The earlier within-scene maximum and nearest-pixel rules were removed.
 
 ## Columns
 
 | Positions | Fields, in order |
 | --- | --- |
-| 1–16 | `date_utc`, `Hylak_id`, `Lake_name`, `Lake_area_km2`, `states`, `state_ids`, `latitude`, `longitude`, `day_status`, `within_pass_method`, `satellites`, `scenes_used`, `scene_ids`, `scene_names`, `failed_or_unavailable_scenes`, `Lake_cells` |
+| 1–16 | `date_solar`, `Hylak_id`, `Lake_name`, `Lake_area_km2`, `states`, `state_ids`, `latitude`, `longitude`, `day_status`, `within_pass_method`, `satellites`, `scenes_used`, `scene_ids`, `scene_names`, `failed_or_unavailable_scenes`, `Lake_cells` |
 | 17 | `primary_retained_cells` |
 | 18–20 | `Cloud_excluded_any_scene_cells`, `Cloud_excluded_with_valid_daily_CI_cells`, `Cloud_excluded_without_valid_daily_CI_cells` |
 | 21–22 | `ci_input_valid_cells`, `ci_candidate_cells` |
@@ -49,7 +53,7 @@ approved cloud diagnostics replace that group.
   `valid_water_mask`. It need not have valid inputs for every index.
 - `ci_input_valid_cells`: at least one valid CI-input observation, using the
   existing `ci_valid_mask` path. This includes valid non-detections.
-- `ci_candidate_cells` and `CI_valid_cells`: finite CI candidate cell maxima.
+- `ci_candidate_cells` and `CI_valid_cells`: bins with a finite CI candidate value.
 - `CI_cyano_valid_cells` and its ordinary statistics include all valid daily
   CI-cyano values, including valid non-detections. The existing daily value rule
   uses CI when finite and SS665 is positive, otherwise zero for CI-valid water.
@@ -74,8 +78,10 @@ A cell with no observation is not automatically called cloudy. Excluded and
 valid observations may overlap within one scene or across different scenes.
 The without-valid count does not prove cloud was the only cause of missing data.
 
-The daily NetCDF stores all five cell maxima and `primary_retained_any` and
-`cloud_excluded_any` flags for inspection. NASA counts come from the original
+The daily NetCDF lists the lake bins (bin number, row, column, bin-centre
+latitude/longitude, bin area, lake id, number of scenes with a valid view) with
+all five daily bin values and `primary_retained_any` and `cloud_excluded_any`
+flags for inspection. NASA counts come from the original
 NASA daily raster and remain independent of these local grids.
 
 ## Fresh output and provenance

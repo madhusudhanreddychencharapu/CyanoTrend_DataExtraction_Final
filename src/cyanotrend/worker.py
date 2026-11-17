@@ -190,16 +190,16 @@ def process(workspace, sid, attempt):
                         "timings": ledger.scene(sid)["timings"],
                         "attempt": attempt,
                     })
-                    # Lake pixels on NASA CyAN's CONUS 300 m grid, beside the ZIP, for the
+                    # Lake pixels area-weighted into ISIN bins, beside the ZIP, for the
                     # daily merge. Not fatal: the daily step rebuilds it from this scene's native files.
                     try:
                         from .daily.grid import write_scene_grid, scene_grid_path
-                        meta["nasa_cyan_grid"] = write_scene_grid(
+                        meta["isin_grid"] = write_scene_grid(
                             native_dir, scene, scene_grid_path(native_dir, sid, config_hash),
                             native_files=native_files,
                         )
                     except Exception as exc:
-                        meta["nasa_cyan_grid"] = {"status": "error", "error": redact(f"{type(exc).__name__}: {exc}")[:500]}
+                        meta["isin_grid"] = {"status": "error", "error": redact(f"{type(exc).__name__}: {exc}")[:500]}
                     build_bundle(workspace, scene, record["reference_id"], raster, table, meta, comparison)
             ledger.update(sid, stage="ready_to_publish")
         except BaseException as e:

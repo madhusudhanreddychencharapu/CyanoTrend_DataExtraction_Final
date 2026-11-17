@@ -274,11 +274,11 @@ PYTHONPATH=src python -m pytest -q
 
 ## 9. Merge scenes per day (S3A/S3B daily maximum)
 
-`daily` merges processed scenes per UTC date and lake on NASA CyAN's 300 m grid.
+`daily` merges processed scenes per local solar date and lake on ISIN bins.
 Run it after any `run`. It reads saved scene results and publishes daily products;
 it does not process scenes. Repeating a date rebuilds its files and replaces its
-master rows. In this example, `--start` and `--end` select the same inclusive UTC
-date. Replace `MICHIGAN_ID_FROM_REGIONS` with Michigan's actual ID. The previously
+master rows. In this example, `--start` and `--end` select the same inclusive solar
+date (scene start UTC + lake longitude / 15 hours; the same calendar day as UTC for the USA). Replace `MICHIGAN_ID_FROM_REGIONS` with Michigan's actual ID. The previously
 explained `plan` and `run --once` commands prepare and process its scenes first.
 
 ```bash
@@ -287,7 +287,7 @@ cyanotrend --output "Output Data Notebook Parity" run --once
 cyanotrend --output "Output Data Notebook Parity" daily --start 2024-08-14 --end 2024-08-14
 ```
 
-For a lake assigned to Michigan by its HydroLAKES pour point, the files are:
+For a lake whose record belongs to Michigan, the files are:
 
 ```text
 Output Data Notebook Parity/daily/USA/Michigan/2024/08/14/
@@ -296,29 +296,34 @@ Output Data Notebook Parity/daily/USA/Michigan/2024/08/14/
   2024-08-14_manifest.json
 ```
 
-Each lake appears only in its assigned state's folder. The CSV's `states` and
-`state_ids` still list all states the lake touches. A lake whose scenes are all
+The same layout, `daily/<country>/<state>/YYYY/MM/DD/`, is used for every country. Each lake
+appears only once per date: a lake shared by several states or countries is filed under the
+region whose plan processed it first (earliest plan whose region touches the lake; else the
+pour-point state; else the region that first processed the scene), and a later plan for a
+neighbouring region reuses the same processed scene. The CSV's `states` and `state_ids`
+still list all states the lake touches. A lake whose scenes are all
 processed gets a CSV row. A lake still missing a scene is listed under
 `waiting_lakes` in its state's manifest with the missing scene names. Plan/run
 the required scenes, then rerun `daily` for the same dates to update the files.
-The daily method is now `max`: each index takes the maximum valid overlapping
-value within each scene, then across all selected acquisitions of the UTC day.
-The native formulas and masks are unchanged. `--method` selects the method;
-`max` is its default and only supported daily value. Old `area`/`nearest` commands
+The daily method is area-weighted binning on ISIN bins (69120 rows, about 290 m):
+within each scene every pixel is shared among the bins it overlaps by area and a
+bin's value is the area-weighted mean of its valid pixels; the daily value of
+each index is then the highest scene value of the bin across all selected
+acquisitions of the solar date. The native formulas and masks are unchanged.
+`--method area` is the default and only supported value; `max` and `nearest`
 are rejected. See [daily columns](DAILY_COLUMNS.md) for the exact definitions.
 
 `daily/master_merged_daily.csv` combines the published daily CSV rows, with one
-row per `date_utc` and `Hylak_id`. A successful rerun replaces all rows for that
+row per `date_solar` and `Hylak_id`. A successful rerun replaces all rows for that
 date while preserving other dates. `daily/master_merged_daily_backup.csv` keeps
 the previous successful master, including the header-only version before the
 first publication. Interrupted file replacements are recovered on the next
 `daily` invocation before another date is published.
 
-Unmatched/ambiguous pour points and assignments outside the USA remain deferred
-in the project Word note. Currently these cases report a date-level error before
-publication; no fallback state/country is chosen. This is an unresolved limitation,
-not an agreed boundary policy. No affected real-data lake has been verified by
-the local synthetic tests. The existing daily science remains CONUS-only.
+A lake whose pour point is unmatched or ambiguous is filed under the region that first
+processed its scene, and the manifest records this basis. The NASA CyAN comparison column is
+blank for lakes whose passes are not on the UTC date equal to the solar date. No real-data
+border lake has been verified by the local synthetic tests.
 
 Processed single-scene files use the first planning state's full name:
 
@@ -326,11 +331,11 @@ Processed single-scene files use the first planning state's full name:
 Output Data Notebook Parity/world/USA/Michigan/2024/08/14/
   <scene_id>.zip
   <scene_id>_<window>_<config_hash>_lakepixels.nc
-  <scene_id>_<config_hash>_nasa_grid.nc
+  <scene_id>_<config_hash>_isin_grid.nc
 ```
 
 There can be more than one native lake-pixel file when a scene has multiple
-windows. These files sit directly in the day folder beside the ZIP and NASA grid.
+windows. These files sit directly in the day folder beside the ZIP and the ISIN bin file.
 The scene ZIP contains the science NetCDF, one statistics CSV including the NASA
 count, and metadata JSON. The separate NASA comparison CSV is removed; detailed
 NASA results remain in JSON. Use a fresh output workspace: the new 58-column

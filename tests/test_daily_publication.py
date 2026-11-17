@@ -12,7 +12,7 @@ from cyanotrend.daily.publication import DailyPublisher
 
 
 def row(day, lid, value=1):
-    return {"date_utc": day.isoformat(), "Hylak_id": lid,
+    return {"date_solar": day.isoformat(), "Hylak_id": lid,
             "CI_cyano_detectable_cells": value, "day_status": "complete"}
 
 
@@ -54,14 +54,14 @@ def test_daily_master_replaces_date_preserves_other_dates_and_rotates_backup(pub
     publish(publisher, a, [row(a, 1, 8), row(a, 3, 2)])
     result = read(publisher.master)
     assert len(result) == 3
-    assert {(r["date_utc"], r["Hylak_id"]) for r in result} == {
+    assert {(r["date_solar"], r["Hylak_id"]) for r in result} == {
         (a.isoformat(), "1"), (a.isoformat(), "3"), (b.isoformat(), "2")}
     assert publisher.backup.read_bytes() == before
     before = publisher.master.read_bytes()
     publish(publisher, a, [row(a, 1, 8), row(a, 3, 2)])
     assert publisher.master.read_bytes() == publisher.backup.read_bytes() == before
     publish(publisher, a, [])
-    assert [(r["date_utc"], r["Hylak_id"]) for r in read(publisher.master)] == [(b.isoformat(), "2")]
+    assert [(r["date_solar"], r["Hylak_id"]) for r in read(publisher.master)] == [(b.isoformat(), "2")]
 
 
 @pytest.mark.parametrize("when", ["grid", "before_master", "after_master"])

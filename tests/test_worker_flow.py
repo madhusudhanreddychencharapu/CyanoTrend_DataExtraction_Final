@@ -55,6 +55,6 @@ def test_two_windows_use_one_download_and_one_scene_publication(tmp_path, monkey
         assert folder.relative_to(ws.output).parts == ('world', 'USA', 'Michigan', '2024', '01', '01')
         assert len(list(folder.glob('*_lakepixels.nc'))) == 2
         assert not list(folder.glob('*_native'))
-        assert len(list(folder.glob('*_nasa_grid.nc'))) == 1
+        assert len(list(folder.glob('*_isin_grid.nc'))) == 1
     finally:
         fixture.tearDown()

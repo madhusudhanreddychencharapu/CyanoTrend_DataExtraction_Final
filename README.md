@@ -27,9 +27,11 @@ or executes a notebook at runtime. No Gradio, HTML maps or frontend are included
 - Native window NetCDFs are retained next to the ZIP for verification, as in the notebook.
 - A scene keeps the country/state folder of the first plan that queues it. Later
   plans reuse the same scene without moving or processing it again.
-- Daily results use each lake's pour-point state and date-based filenames. The
-  daily master contains one row per lake/date; reruns replace that date's rows,
-  preserving the previous master as a backup.
+- Daily results are dated by the lake's local solar date (scene start UTC + lake longitude / 15 h)
+  and stored as `daily/<country>/<state>/<YYYY>/<MM>/<DD>/` for every country. A lake shared by
+  several states or countries has one record, under the region that processed it first; a later plan
+  for a neighbouring region reuses the same processed scene. The daily master contains one row
+  per lake/date; reruns replace that date's rows, preserving the previous master as a backup.
 - `--lake-region WORLD` (notebook default) or `USA` controls loaded HydroLAKES, independently of the planning state. USA uses the notebook Census polygon intersection, not a Country-column filter.
 - One coordinator publishes the master CSV. The backup is the **previous successful
   master version**, including the header-only master before the first scene.
@@ -60,11 +62,11 @@ CyanoTrend_Final_DataExtraction/
     world/<country>/<planning state>/<YYYY>/<MM>/<DD>/
       <scene_id>.zip
       <scene_id>_<window>_<config_hash>_lakepixels.nc
-      <scene_id>_<config_hash>_nasa_grid.nc
+      <scene_id>_<config_hash>_isin_grid.nc
     daily/
       master_merged_daily.csv
       master_merged_daily_backup.csv
-      USA/<pour-point state>/<YYYY>/<MM>/<DD>/
+      <country>/<state>/<YYYY>/<MM>/<DD>/
         YYYY-MM-DD_lakes.csv
         YYYY-MM-DD_grid.nc
         YYYY-MM-DD_manifest.json
@@ -76,11 +78,11 @@ Small hidden locks/journals support operational recovery. Logs and the ledger
 are operational records, not stored copies of intermediate scientific files.
 
 This layout applies to future runs in a fresh output workspace; existing outputs
-are not migrated or deleted. Unmatched/ambiguous and foreign-country daily
-pour-point assignments remain unresolved in
-[the project Word note](CyanoTrend_Organization_Plan_and_Deferred_Issues.docx).
-They currently produce a date-level error before publication; no fallback folder
-is selected. The existing daily science remains limited to the CONUS grid.
+are not migrated or deleted. The daily grid is the global ISIN bin grid (see
+architecture section 8); the daily lake universe and the `<country>/<state>` layout
+are the same for every country. Which region owns a shared lake is decided by
+`daily/regions.py` (first plan whose region touches the lake, else the pour-point state,
+else the region that first processed the scene).
 
 **Validation boundary:** implementation and local tests are not proof of a
 successful authenticated HPC run or numerical agreement on real satellite data.

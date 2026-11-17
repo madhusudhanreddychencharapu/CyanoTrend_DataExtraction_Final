@@ -272,6 +272,31 @@ the selected environment; `-q` makes its output concise:
 PYTHONPATH=src python -m pytest -q
 ```
 
+## 8b. Plans, the queue and status
+
+`cyanotrend plans` lists the saved plans (dates, region, scenes by status, and whether the plan file exists).
+`cyanotrend cancel-plan <id> [--dry-run]` withdraws a plan: its queued, retrying and failed scenes are deleted
+(unless another plan lists them) and the plan file is moved to `plans/cancelled/` so `run` cannot import it
+again. `cyanotrend cancel-queued [--plan ID] [--start D] [--end D] [--include-failed] [--dry-run]` removes
+scenes that have not started. Running, publishing and finished scenes are never removed. Deleting a plan file
+by hand does not remove its scenes from the queue; use `cancel-plan` for that.
+
+`cyanotrend status` reports the totals by status, whether a `run` holds the service lock, the scenes in
+progress (marked ABANDONED when no `run` is active) and an "attention" list. Read-only commands stop with a
+clear message when `--output` has no `operations.sqlite3`, instead of creating an empty workspace.
+
+## 8c. Compare a lake with NASA CyAN (list lakes, scatter plot)
+
+After a state-limited `daily` run, `cyanotrend lakes --country ISO3 --state-id ID --date D [--name TEXT]
+[--limit N]` lists the lakes of that state that have our merged daily row and a NASA CyAN value for the date
+(biggest first; `--name` filters by text; unnamed lakes show their Hylak_id).
+`cyanotrend scatter --country ISO3 --state-id ID --date D --lake NAME_OR_ID [--lake ...] [--out-dir DIR]`
+draws one dot per NASA cell inside the lake: x = NASA CyAN CI_cyano, y = our CI_cyano of the ISIN bin at the
+cell centre, with R and a regression line, and writes the PNG plus a CSV of the pairs under
+`<output>/compare/<country>/<state>/yyyy/mm/dd/`. NASA CyAN is used only for this comparison. The plot needs
+matplotlib (`pip install matplotlib`). If the daily result is missing, the command stops and prints the
+`daily` command to run first.
+
 ## 9. Merge scenes per day (S3A/S3B daily maximum)
 
 `daily` merges processed scenes per local solar date and lake on ISIN bins.
@@ -295,6 +320,10 @@ Output Data Notebook Parity/daily/USA/Michigan/2024/08/14/
   2024-08-14_grid.nc
   2024-08-14_manifest.json
 ```
+
+`daily --country ISO3 --state-id ID` merges only the lakes that touch that state and are filed under it,
+which is much faster than merging every lake the scenes touch. In that mode only those lakes' rows are
+replaced in `master_merged_daily.csv`; other lakes' rows and other states' folders stay as they are.
 
 The same layout, `daily/<country>/<state>/YYYY/MM/DD/`, is used for every country. Each lake
 appears only once per date: a lake shared by several states or countries is filed under the

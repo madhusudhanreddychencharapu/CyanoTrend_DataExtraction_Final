@@ -7,6 +7,7 @@ Only the coordinator publishes outputs; workers may record their own timings.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
 import sqlite3
 import time
@@ -34,6 +35,23 @@ CREATE INDEX IF NOT EXISTS scene_queue ON scenes(status,next_attempt,created);
 CREATE INDEX IF NOT EXISTS timing_scene ON timings(scene_id);
 """
 
+# Everything except the (large) scene_json: enough for status, listings and the queue.
+LIGHT_COLUMNS = ("id,status,attempts,stage,bytes_downloaded,download_seconds,error,created,updated,"
+                 "next_attempt,retry_start_attempt")
+
+
+def _chunks(values, size=400):
+    values = list(values)
+    for i in range(0, len(values), size):
+        yield values[i:i + size]
+
+
+def _scene_day(scene_json):
+    stamp = datetime.fromisoformat(json.loads(scene_json)["start"].replace("Z", "+00:00"))
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc).date()
+
 
 class Ledger:
     def __init__(self, path):
@@ -42,11 +60,12 @@ class Ledger:
         with self.connect() as c:
             c.execute("PRAGMA journal_mode=WAL")
             c.executescript(SCHEMA)
-            # Keep old attempt/log identities when enabling explicit retry batches.
-            c.execute("BEGIN IMMEDIATE")
-            columns = {r[1] for r in c.execute("PRAGMA table_info(scenes)")}
-            if "retry_start_attempt" not in columns:
-                c.execute("ALTER TABLE scenes ADD COLUMN retry_start_attempt INTEGER NOT NULL DEFAULT 0")
+            # Keep old attempt/log identities when enabling explicit retry batches. Only an old
+            # database needs the write lock, so status and listings never wait behind a busy run.
+            if "retry_start_attempt" not in {r[1] for r in c.execute("PRAGMA table_info(scenes)")}:
+                c.execute("BEGIN IMMEDIATE")
+                if "retry_start_attempt" not in {r[1] for r in c.execute("PRAGMA table_info(scenes)")}:
+                    c.execute("ALTER TABLE scenes ADD COLUMN retry_start_attempt INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def connect(self):
@@ -258,3 +277,96 @@ class Ledger:
               GROUP BY r.country,r.state_id,r.state_name ORDER BY r.country,r.state_name"""
                 )
             ]
+
+    def light_rows(self, status=None):
+        """Like rows(), without scene_json: fast on large queues."""
+        with self.connect() as c:
+            sql = f"SELECT {LIGHT_COLUMNS} FROM scenes"
+            args = ()
+            if status:
+                sql += " WHERE status=?"
+                args = (status,)
+            return [dict(r) for r in c.execute(sql + " ORDER BY created,id", args)]
+
+    def plan_rows(self):
+        """Every registered plan with its scene counts by status."""
+        with self.connect() as c:
+            plans = [dict(r) for r in c.execute("SELECT id,path,created,metadata FROM plans ORDER BY created,id")]
+            counts = {}
+            for plan_id, status, n in c.execute(
+                "SELECT p.plan_id, s.status, count(*) FROM plan_scenes p JOIN scenes s ON s.id=p.scene_id "
+                "GROUP BY p.plan_id, s.status"
+            ):
+                counts.setdefault(plan_id, {})[status] = n
+        for plan in plans:
+            plan["counts"] = counts.get(plan["id"], {})
+        return plans
+
+    def scenes_without_plan(self):
+        """Scene counts by status for scenes that no registered plan lists."""
+        with self.connect() as c:
+            return {r[0]: r[1] for r in c.execute(
+                "SELECT status,count(*) FROM scenes WHERE id NOT IN (SELECT scene_id FROM plan_scenes) GROUP BY status")}
+
+    def withdraw(self, statuses, plan_id=None, start=None, end=None, drop_plan=False, dry_run=False):
+        """Delete scenes in the given statuses from the queue, in one write transaction.
+
+        A scene a worker has claimed is `running` before this lock is granted, so it is never
+        removed; neither are publishing or finished scenes unless named in `statuses`.
+        With plan_id only that plan's scenes are considered, and a scene that another plan still
+        lists is only unlinked from this plan. start/end (dates) limit by the scene's UTC start day.
+        drop_plan: also delete the plan row once no scene is linked to it.
+        """
+        statuses = tuple(statuses)
+        marks = ",".join("?" * len(statuses))
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            if plan_id:
+                found = c.execute(
+                    f"SELECT s.id,s.status,s.scene_json FROM scenes s JOIN plan_scenes p ON p.scene_id=s.id "
+                    f"WHERE p.plan_id=? AND s.status IN ({marks}) ORDER BY s.id", (plan_id, *statuses)).fetchall()
+            else:
+                found = c.execute(
+                    f"SELECT id,status,scene_json FROM scenes WHERE status IN ({marks}) ORDER BY id", statuses).fetchall()
+            chosen = []
+            for row in found:
+                if start is not None or end is not None:
+                    day = _scene_day(row["scene_json"])
+                    if (start is not None and day < start) or (end is not None and day > end):
+                        continue
+                chosen.append((row["id"], row["status"]))
+            shared = set()
+            if plan_id:
+                for part in _chunks(sid for sid, _ in chosen):
+                    shared |= {r[0] for r in c.execute(
+                        f"SELECT DISTINCT scene_id FROM plan_scenes WHERE plan_id<>? "
+                        f"AND scene_id IN ({','.join('?' * len(part))})", (plan_id, *part))}
+            removed = [(sid, status) for sid, status in chosen if sid not in shared]
+            unlinked = [(sid, status) for sid, status in chosen if sid in shared]
+            before = {}
+            if plan_id:
+                before = {r[0]: r[1] for r in c.execute(
+                    "SELECT s.status,count(*) FROM plan_scenes p JOIN scenes s ON s.id=p.scene_id "
+                    "WHERE p.plan_id=? GROUP BY s.status", (plan_id,))}
+            if not dry_run:
+                for part in _chunks(sid for sid, _ in removed):
+                    inside = ",".join("?" * len(part))
+                    for table, column in (("timings", "scene_id"), ("scene_regions", "scene_id"),
+                                          ("plan_scenes", "scene_id"), ("scenes", "id")):
+                        c.execute(f"DELETE FROM {table} WHERE {column} IN ({inside})", part)
+                for part in _chunks(sid for sid, _ in unlinked):
+                    c.execute(f"DELETE FROM plan_scenes WHERE plan_id=? AND scene_id IN ({','.join('?' * len(part))})",
+                              (plan_id, *part))
+            left = dict(before)
+            for _, status in removed + unlinked:
+                left[status] = left.get(status, 0) - 1
+            left = {k: v for k, v in left.items() if v > 0}
+            plan_removed = bool(plan_id and drop_plan and not left)
+            if plan_removed and not dry_run:
+                c.execute("DELETE FROM plans WHERE id=?", (plan_id,))
+        by_status = {}
+        for _, status in removed:
+            by_status[status] = by_status.get(status, 0) + 1
+        return {"removed": [sid for sid, _ in removed], "removed_by_status": by_status,
+                "unlinked_shared": [sid for sid, _ in unlinked], "left_in_plan": left,
+                "plan_removed": plan_removed}

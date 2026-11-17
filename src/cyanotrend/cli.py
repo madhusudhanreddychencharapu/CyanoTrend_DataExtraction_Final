@@ -109,7 +109,48 @@ def parser():
         default="area",
         help="Area-weighted binning of pixels into ISIN bins within each scene; the daily value is the maximum over scenes, independently per index",
     )
-    sub.add_parser("status", help="Unique-scene totals and active processing stages")
+    q.add_argument(
+        "--country",
+        help="ISO3 country of --state-id. With --state-id, merge only the lakes filed under that state "
+        "(much faster than all lakes); other states' results are left untouched",
+    )
+    q.add_argument("--state-id", help="Exact state/province shapeID from `regions`; needs --country")
+    q = sub.add_parser(
+        "lakes",
+        help="Find the lakes of a state that have a merged daily row and a NASA CyAN value on a date, biggest first",
+    )
+    q.add_argument("--country", required=True, help="ISO3 country, e.g. USA")
+    q.add_argument("--state-id", required=True, help="Exact state/province shapeID from `regions`")
+    q.add_argument("--date", required=True, help="Solar date of the daily result, YYYY-MM-DD")
+    q.add_argument("--name", help="Only lakes whose name contains this text (case-insensitive)")
+    q.add_argument("--limit", type=positive, default=30, help="How many lakes to list (default: 30)")
+    q = sub.add_parser(
+        "scatter",
+        help="Scatter plot, NASA CyAN CI_cyano (x) vs our CI_cyano (y), one NASA cell per dot, for lakes of a state on a date",
+    )
+    q.add_argument("--country", required=True, help="ISO3 country, e.g. USA")
+    q.add_argument("--state-id", required=True, help="Exact state/province shapeID from `regions`")
+    q.add_argument("--date", required=True, help="Solar date of the daily result, YYYY-MM-DD")
+    q.add_argument("--lake", action="append", required=True,
+                   help="Lake name or Hylak_id (see `lakes`); repeat the option for several lakes")
+    q.add_argument("--out-dir", help="Folder for the PNG and the CSV of the pairs (default: <output>/compare/...)")
+    sub.add_parser("status", help="Queue totals, whether `run` is active, stages of running scenes and what needs attention")
+    sub.add_parser("plans", help="List saved plans: dates, region, scene counts by status, and whether the plan file exists")
+    q = sub.add_parser(
+        "cancel-plan",
+        help="Withdraw a plan: remove its queued/retrying/failed scenes and move its plan file aside",
+    )
+    q.add_argument("plan_id", help="Plan ID or a unique start of it (see `plans`)")
+    q.add_argument("--dry-run", action="store_true", help="Show what would be removed; change nothing")
+    q = sub.add_parser(
+        "cancel-queued",
+        help="Remove scenes that have not started (queued or waiting to retry) from the queue",
+    )
+    q.add_argument("--plan", help="Only scenes of this plan (ID or unique start); scenes another plan lists are kept")
+    q.add_argument("--start", help="Only scenes starting on or after this UTC date, YYYY-MM-DD")
+    q.add_argument("--end", help="Only scenes starting on or before this UTC date, YYYY-MM-DD")
+    q.add_argument("--include-failed", action="store_true", help="Also remove failed scenes")
+    q.add_argument("--dry-run", action="store_true", help="Show what would be removed; change nothing")
     sub.add_parser("retry-failed", help="Requeue all failed scenes with three additional attempts; preserve logs and attempt history")
     q = sub.add_parser("scenes", help="List scene progress and staging transfer rates")
     q.add_argument(
@@ -155,6 +196,10 @@ def emit(value, as_json=False):
             elif isinstance(v, dict):
                 print(k + ":")
                 emit(v)
+            elif isinstance(v, list) and v:
+                print(k + ":")
+                for item in v:
+                    print(f"  - {item}")
             else:
                 print(f"{k}: {v}")
     else:
@@ -229,8 +274,16 @@ def verify(workspace, scene_id=None):
     return {"ok": not errors, "checked_archives": checked, "errors": errors}
 
 
+NEEDS_WORKSPACE = ("daily", "verify", "retry-failed", "status", "plans", "cancel-plan", "cancel-queued",
+                   "scenes", "scene", "coverage", "lakes", "scatter")
+
+
 def dispatch(a):
     ws = Workspace.create(a.output, a.references, a.scratch, a.ocssw)
+    if a.command in NEEDS_WORKSPACE:
+        from .queue_control import require_workspace
+
+        require_workspace(ws)
     if a.command == "prepare":
         from .references import prepare
 
@@ -262,7 +315,19 @@ def dispatch(a):
     if a.command == "daily":
         from .daily.merge import run_daily
 
-        return run_daily(ws, a.start, a.end, method=a.method)
+        return run_daily(ws, a.start, a.end, method=a.method, country=a.country, state_id=a.state_id)
+    if a.command == "lakes":
+        from .daily.compare import find_lakes
+
+        return find_lakes(ws, a.country, a.state_id, a.date, name=a.name, limit=a.limit)
+    if a.command == "scatter":
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:
+            raise RuntimeError("The scatter plot needs matplotlib: pip install matplotlib") from None
+        from .daily.compare import scatter
+
+        return scatter(ws, a.country, a.state_id, a.date, a.lake, out_dir=a.out_dir)
     if a.command == "run":
         from .service import serve
 
@@ -280,16 +345,24 @@ def dispatch(a):
     if a.command == "retry-failed":
         return ledger.requeue_failed()
     if a.command == "status":
-        return {
-            **ledger.summary(),
-            "active": [
-                scene_summary(r)
-                for r in ledger.rows()
-                if r["status"] in ("running", "publishing")
-            ],
-        }
+        from .queue_control import status_report
+
+        return status_report(ws, ledger)
+    if a.command == "plans":
+        from .queue_control import list_plans
+
+        return list_plans(ws, ledger)
+    if a.command == "cancel-plan":
+        from .queue_control import cancel_plan
+
+        return cancel_plan(ws, ledger, a.plan_id, dry_run=a.dry_run)
+    if a.command == "cancel-queued":
+        from .queue_control import cancel_queued
+
+        return cancel_queued(ws, ledger, plan=a.plan, start=a.start, end=a.end,
+                             include_failed=a.include_failed, dry_run=a.dry_run)
     if a.command == "scenes":
-        return [scene_summary(r) for r in ledger.rows(a.status)]
+        return [scene_summary(r) for r in ledger.light_rows(a.status)]
     if a.command == "scene":
         result = ledger.scene(a.scene_id)
         result.pop("scene_json", None)

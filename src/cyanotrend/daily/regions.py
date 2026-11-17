@@ -48,6 +48,37 @@ def with_states(scope, admin):
     return out.reset_index(drop=True)
 
 
+def state_scope(lakes, admin, country, state_id):
+    """Lakes touching one state, and the state itself: the universe of a daily run limited to that state.
+
+    Same lake selection as `plan --state-id`. Each lake is still filed under its owner region
+    (RegionOwners); the run then keeps only the lakes filed under this state.
+    """
+    from shapely import union_all
+
+    if not country or not state_id:
+        raise ValueError("--country and --state-id must be given together")
+    chosen = admin[(admin.country_iso3 == str(country).upper()) & (admin.shapeID.astype(str) == str(state_id))]
+    if chosen.empty:
+        raise ValueError("Country/state not found; inspect `cyanotrend regions` first")
+    names = chosen.shapeName.dropna().astype(str).unique()
+    hits = sorted({int(i) for i in lakes.sindex.query(union_all(chosen.geometry), predicate="intersects")})
+    if not hits:
+        raise ValueError("No lakes touch the selected state")
+    region = {"country": str(country).upper(), "state_id": str(state_id),
+              "state_name": str(names[0]) if len(names) else ""}
+    return lakes.iloc[hits].reset_index(drop=True), region
+
+
+def is_region(owner, region):
+    """Does an owner() result name this country/state?"""
+    if not owner or str(owner.get("country", "")).upper() != region["country"]:
+        return False
+    if owner.get("state_id") and region["state_id"]:
+        return str(owner["state_id"]) == region["state_id"]
+    return owner.get("state_name") == region["state_name"]
+
+
 class RegionOwners:
     """Decides the country/state folder of a lake's record (rules in the module docstring)."""
 

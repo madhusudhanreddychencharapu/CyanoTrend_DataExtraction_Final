@@ -629,3 +629,71 @@ def test_other_countries_and_unmatched_lakes_use_the_same_layout(workspace):
     rows, manifest, _ = _read(ws, "Michigan")  # lake B: unmatched, so the region that processed the scene
     assert list(rows) == [202]
     assert manifest["output_region"]["lake_basis"] == {"202": "first_scene_region"}
+
+
+# ---------------------------------------------------------------------------
+# Daily merge limited to one state
+# ---------------------------------------------------------------------------
+
+def _master(ws):
+    with (ws.output / "daily/master_merged_daily.csv").open() as f:
+        return {int(r["Hylak_id"]): r for r in csv.DictReader(f)}
+
+
+def test_daily_limited_to_one_state_replaces_only_that_states_lakes(workspace):
+    ws = workspace
+    scene = _scene("S3A_OL_1_EFR____20240814T161518_20240814T161818_20240815T200533_0179_115_368_2340_PS1_O_NT_004",
+                   "S3A", "2024-08-14T16:15:18Z", _footprint(*BOTH))
+    _planned(ws, scene, [("MI", "Michigan"), ("WI", "Wisconsin")])  # lake A is filed under Michigan, lake B under Wisconsin
+    catalogue = lambda a, b, bbox=None: [scene]
+    with patch("cyanotrend.references.manifest", return_value={"reference_id": "ref"}):
+        assert run_daily(ws, DAY, DAY, catalogue=catalogue, lakes=_lakes(), admin=_regions())["ok"]
+    master_before = _master(ws)
+    michigan_files = {p.name: p.read_bytes() for p in (ws.output / "daily/USA/Michigan/2024/08/14").iterdir()}
+    assert set(master_before) == {101, 202} and int(master_before[202]["CI_cyano_detectable_cells"]) > 0
+
+    # Lake B no longer shows any detection; only a run limited to Wisconsin may notice.
+    _write_native(ws, scene, [(LAKE_A, lambda i, j: 9e-3), (LAKE_B, lambda i, j: 0.0)])
+    for old in ws.archive(scene).parent.glob("*_isin_grid.nc"):
+        old.unlink()
+    with patch("cyanotrend.references.manifest", return_value={"reference_id": "ref"}):
+        result = run_daily(ws, DAY, DAY, catalogue=catalogue, lakes=_lakes(), admin=_regions(),
+                           country="usa", state_id="WI")
+    assert result["ok"], result
+    assert result["restricted_to"] == {"country": "USA", "state_id": "WI", "state_name": "Wisconsin"}
+    day = result["days"][0]
+    assert day["skipped_filed_under_other_regions"] == 1  # lake A is Michigan's record
+
+    master = _master(ws)
+    assert master[101] == master_before[101]  # Michigan's lake: untouched
+    assert int(master[202]["CI_cyano_detectable_cells"]) == 0  # Wisconsin's lake: replaced
+    assert {p.name: p.read_bytes() for p in (ws.output / "daily/USA/Michigan/2024/08/14").iterdir()} == michigan_files
+    rows, manifest, _ = _read(ws, "Wisconsin")
+    assert set(rows) == {202} and manifest["run_scope"]["restricted_to"]["state_id"] == "WI"
+
+    # Limited to Michigan: lake A is the only candidate, and lake B stays as it is.
+    with patch("cyanotrend.references.manifest", return_value={"reference_id": "ref"}):
+        result = run_daily(ws, DAY, DAY, catalogue=catalogue, lakes=_lakes(), admin=_regions(),
+                           country="USA", state_id="MI")
+    assert result["ok"] and result["days"][0]["skipped_filed_under_other_regions"] == 0
+    master = _master(ws)
+    assert set(master) == {101, 202} and int(master[202]["CI_cyano_detectable_cells"]) == 0
+    assert float(master[101]["CI_cyano_max"]) == pytest.approx(9e-3, rel=1e-5)  # Michigan's lake: replaced
+    assert set(_read(ws, "Wisconsin")[0]) == {202}
+
+
+def test_daily_state_limit_needs_both_arguments_and_a_known_state(workspace):
+    ws = workspace
+    scene = _scene("S3A_OL_1_EFR____20240814T161518_20240814T161818_20240815T200533_0179_115_368_2340_PS1_O_NT_004",
+                   "S3A", "2024-08-14T16:15:18Z", _footprint(*BOTH))
+    _planned(ws, scene, [("MI", "Michigan")])
+    catalogue = lambda a, b, bbox=None: [scene]
+    with patch("cyanotrend.references.manifest", return_value={"reference_id": "ref"}):
+        with pytest.raises(ValueError, match="together"):
+            run_daily(ws, DAY, DAY, catalogue=catalogue, lakes=_lakes(), admin=_regions(), country="USA")
+        with pytest.raises(ValueError, match="not found"):
+            run_daily(ws, DAY, DAY, catalogue=catalogue, lakes=_lakes(), admin=_regions(),
+                      country="USA", state_id="XX")
+    from cyanotrend.cli import parser
+    a = parser().parse_args(["daily", "--start", DAY, "--end", DAY, "--country", "USA", "--state-id", "MI"])
+    assert (a.country, a.state_id) == ("USA", "MI")

@@ -81,8 +81,13 @@ class DailyPublisher:
         sync_dir(self.root)
         shutil.rmtree(self._path(record["staging"]))
 
-    def publish(self, day, rows, products, staging):
-        """Commit all state products for one date plus its deduplicated master rows."""
+    def publish(self, day, rows, products, staging, replace_ids=None):
+        """Commit all state products for one date plus its deduplicated master rows.
+
+        replace_ids: None replaces the whole date in the master and removes the date's files of states
+        that no longer have a record. A set of Hylak_ids (a run limited to one state) replaces only
+        those lakes' rows and leaves every other lake's rows and every other folder untouched.
+        """
         self.initialize()
         stamp = day.isoformat()
         keys = set()
@@ -91,6 +96,10 @@ class DailyPublisher:
             if key[0] != stamp or key in keys:
                 raise ValueError("Daily publication contains a wrong date or duplicate lake/date row")
             keys.add(key)
+        if replace_ids is not None:
+            replace_ids = {int(i) for i in replace_ids}
+            if any(key[1] not in replace_ids for key in keys):
+                raise ValueError("Restricted daily publication contains a lake outside its scope")
         new_master = staging / "master.next.csv"
         with self.master.open(newline="") as src, new_master.open("w", newline="") as dst:
             reader = csv.DictReader(src)
@@ -105,7 +114,7 @@ class DailyPublisher:
                 if key in previous_keys:
                     raise ValueError("Duplicate lake/date key in existing daily master")
                 previous_keys.add(key)
-                if key[0] != stamp:
+                if key[0] != stamp or (replace_ids is not None and key[1] not in replace_ids):
                     writer.writerow(row)
             writer.writerows(rows)
             dst.flush()
@@ -117,7 +126,7 @@ class DailyPublisher:
         targets = {str(Path(target)) for target in products}
         remove = []
         pattern = f"*/*/{day.year:04d}/{day.month:02d}/{day.day:02d}/{stamp}_manifest.json"
-        for old in self.root.glob(pattern):
+        for old in (self.root.glob(pattern) if replace_ids is None else ()):
             for suffix in ("lakes.csv", "grid.nc", "manifest.json"):
                 relative = str(old.with_name(f"{stamp}_{suffix}").relative_to(self.root))
                 if relative not in targets:
@@ -138,11 +147,12 @@ class DailyPublisher:
         self.recover()
 
 
-def publish_day(workspace, day, rows, cells, manifest, lake_scene_ids, region_of):
+def publish_day(workspace, day, rows, cells, manifest, lake_scene_ids, region_of, replace_ids=None):
     """Partition finished results by the country/state that owns each lake's record.
 
     region_of: Hylak_id -> {country, state_id, state_name, basis} (see regions.py). Each lake has
     exactly one region, so a lake shared between states or countries is written once.
+    replace_ids: Hylak_ids a run limited to one state is allowed to replace (None: the whole date).
     """
     from .merge import CSV_COLUMNS, _write_csv, _write_daily_grid, day_folder
 
@@ -201,7 +211,7 @@ def publish_day(workspace, day, rows, cells, manifest, lake_scene_ids, region_of
             for path in folder.iterdir():
                 products[str(relative / path.name)] = path
             folders.append(str(publisher.root / relative))
-        publisher.publish(day, rows, products, staging)
+        publisher.publish(day, rows, products, staging, replace_ids)
     finally:
         # Once a journal exists, its staged files are required for recovery.
         if not publisher.journal.exists() and staging.exists():

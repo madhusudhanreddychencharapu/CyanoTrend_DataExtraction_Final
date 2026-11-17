@@ -44,7 +44,7 @@ import numpy as np
 from ..common import dated_region_folder, digest, file_lock, utcnow
 from ..ledger import Ledger
 from . import grid as isin
-from .regions import RegionOwners, lake_longitude
+from .regions import RegionOwners, is_region, lake_longitude, state_scope
 from .features import INDICES, FLAGS, summary as index_summary
 from ..schema import NASA_DETECTION_COLUMN
 
@@ -285,7 +285,9 @@ def _text(value):
 
 
 def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, status_of,
-              lake_bins, capped_plans, owners):
+              lake_bins, capped_plans, owners, only=None):
+    """Merge one solar date. only: {country, state_id, state_name} limits the run to the lakes
+    filed under that state (see run_daily); None merges every lake the processed scenes touch."""
     from ..core.catalogue import scene_geometry
     from shapely import union_all
 
@@ -367,16 +369,29 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         return grids[sid]
 
     names = {sid: scenes[sid].get("name", sid) for sid in scenes}
+    scene_region = {r["id"]: json.loads(r["scene_json"]).get("output_region") for r in day_rows}
+    by_creation = sorted(day_rows, key=lambda r: (r["created"], r["id"]))
+
+    def owner_of(lake, scene_ids):
+        first = next((scene_region[r["id"]] for r in by_creation
+                      if r["id"] in scene_ids and scene_region.get(r["id"])), None)
+        return owners.owner(lake, scene_ids, first)
+
     rows, cells, waiting, unavailable, partial = [], [], [], [], []
     checklist, used_days, lake_of = {}, {}, {}
+    filed_elsewhere = 0
     limit = detection_limit()
     for i, lake in enumerate(scope.itertuples(index=False)):
         longitude = lake_longitude(lake)
         keys = sorted(k for k in cover[i] if isin.solar_date(acquisitions[k]["start"], longitude) == day)
         if not keys:
             continue
+        ids = {sid for k in keys for sid in acquisitions[k]["ids"]}
+        if only is not None and not is_region(owner_of(lake, ids), only):
+            filed_elsewhere += 1  # another state's record: skipped before any heavy work
+            continue
         lake_of[int(lake.Hylak_id)] = lake
-        checklist[int(lake.Hylak_id)] = {sid for k in keys for sid in acquisitions[k]["ids"]}
+        checklist[int(lake.Hylak_id)] = ids
         describe = {"Hylak_id": int(lake.Hylak_id), "Lake_name": _text(getattr(lake, "Lake_name", "")),
                     "states": lake.states}
         still = [names[acquisitions[k]["ids"][0]] for k in keys if acquisitions[k]["status"] == "waiting"]
@@ -475,12 +490,17 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         "waiting": len(waiting),
         "unavailable": len(unavailable),
     }
+    if only is not None:
+        counts["skipped_filed_under_other_regions"] = filed_elsewhere
     manifest = {
         "schema": SCHEMA,
         "date_solar": day.isoformat(),
         "date_definition": "local solar date at the lake: scene start (UTC) + lake longitude / 15 hours",
         "created_utc": utcnow(),
         "within_pass_method": method,
+        "run_scope": ({"restricted_to": only,
+                       "note": "only lakes touching this state and filed under it were merged; other states are untouched"}
+                      if only is not None else "every lake touched by the processed scenes"),
         "rules": {
             "checklist": "every catalogue S3A/S3B OLCI EFR scene whose footprint touches the lake and whose solar date at the lake is this date",
             "complete": "every checklist scene processed",
@@ -504,32 +524,32 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         "nasa_cyan_comparison": nasa_metadata,
     }
     from .publication import publish_day
-    scene_region = {}
-    for r in day_rows:
-        scene_region[r["id"]] = json.loads(r["scene_json"]).get("output_region")
     region_of = {}
     for hylak_id in sorted(set(checklist) & ({r["Hylak_id"] for r in rows}
                                              | {w["Hylak_id"] for w in waiting}
                                              | {u["Hylak_id"] for u in unavailable})):
-        first_region = next((scene_region[r["id"]] for r in sorted(day_rows, key=lambda r: (r["created"], r["id"]))
-                             if r["id"] in checklist[hylak_id] and scene_region.get(r["id"])), None)
-        region = owners.owner(lake_of[hylak_id], checklist[hylak_id], first_region)
+        region = owner_of(lake_of[hylak_id], checklist[hylak_id])
         if region is not None:
             region_of[hylak_id] = region
         elif hylak_id in {r["Hylak_id"] for r in rows}:
             raise ValueError(f"No country/state folder could be assigned to Hylak_id={hylak_id}")
         else:
             warnings.append(f"Hylak_id={hylak_id}: no country/state folder could be assigned; not listed in a folder manifest")
-    folders = publish_day(workspace, day, rows, cells, manifest, checklist, region_of)
+    folders = publish_day(workspace, day, rows, cells, manifest, checklist, region_of,
+                          replace_ids=set(checklist) if only is not None else None)
     return {"date": day.isoformat(), "processed_scenes": len(processed), **counts,
             "folders": folders, "warnings": len(warnings)}
 
 
-def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, admin=None):
+def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, admin=None,
+              country=None, state_id=None):
     """Merge every solar date in [start, end]; returns one summary per date.
 
     lakes: the lake universe (default: the workspace's HydroLAKES universe, every country);
     admin: ADM1 boundaries (default: the prepared reference boundaries, loaded only when needed).
+    country + state_id: merge only the lakes that touch that state and are filed under it. That is
+    the same lake selection as `plan --state-id`, and it keeps the run fast. Rows of other lakes
+    in the daily master and the folders of other states are left exactly as they are.
     """
     from .. import references
 
@@ -556,8 +576,18 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, 
         day = isin.utc_date(json.loads(r["scene_json"])["start"])
         if day in wanted:
             rows_by_day.setdefault(day, []).append(r)
-    owners = RegionOwners(plans, membership,
-                          lambda: admin if admin is not None else references.boundaries(workspace, "ADM1"))
+    loaded = []
+
+    def load_admin():
+        if admin is not None:
+            return admin
+        if not loaded:
+            loaded.append(references.boundaries(workspace, "ADM1"))
+        return loaded[0]
+
+    if bool(country) != bool(state_id):
+        raise ValueError("--country and --state-id must be given together")
+    owners = RegionOwners(plans, membership, load_admin)
     results, ok = [], True
     with file_lock(workspace.output / "daily" / ".daily.lock"):
         from .publication import DailyPublisher
@@ -567,11 +597,14 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, 
             return {"ok": True, "days": [{"date": d.isoformat(), "result": "no scenes in the ledger"} for d in days]}
         if lakes is None:
             lakes = references.load_lakes(workspace, region=meta.get("lake_region", "WORLD"))
+        only = None
+        if country:
+            lakes, only = state_scope(lakes, load_admin(), country, state_id)
         cache = LakeBins(workspace, references.manifest(workspace)["reference_id"])
         for day in days:
             try:
                 results.append(merge_day(workspace, ledger, lakes, day, method, catalogue,
-                                         rows_by_day, status_of, cache, capped, owners))
+                                         rows_by_day, status_of, cache, capped, owners, only))
             except Exception as exc:
                 from ..telemetry import redact
                 ok = False
@@ -579,4 +612,7 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, 
                 if publisher.journal.exists():
                     # Finish this interrupted publication on restart before starting another date.
                     break
-    return {"ok": ok, "within_pass_method": method, "days": results}
+    summary = {"ok": ok, "within_pass_method": method, "days": results}
+    if only is not None:
+        summary["restricted_to"] = only
+    return summary

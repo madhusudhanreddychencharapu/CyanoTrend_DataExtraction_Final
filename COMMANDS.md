@@ -123,6 +123,9 @@ cyanotrend --output "Output Data ISIN" --scratch .scratch_v3 run --workers 5 --o
 
 ## 5. Watch progress (second terminal)
 
+`status` shows the totals, whether a `run` is active, the scenes being worked on, and a short
+"attention" list (for example: scenes waiting but no `run` active, or a plan whose file was deleted).
+
 ```bash
 cyanotrend --output "Output Data ISIN" status
 cyanotrend --output "Output Data ISIN" scenes
@@ -153,7 +156,40 @@ cyanotrend --output "Output Data ISIN" scenes --status failed                   
 
 `retry-failed` only requeues. If a `run` is already active it picks the scenes up by itself.
 
-## 7. Merge per day (after the scenes are done)
+## 7. Control plans and the queue
+
+List the plans. `plan_file` says `ok`, `MISSING` (file deleted by hand, scenes still queued) or
+`not registered` (file in `plans/` that the queue does not know):
+
+```bash
+cyanotrend --output "Output Data ISIN" plans
+cyanotrend --output "Output Data ISIN" scenes --status queued
+```
+
+Wrong dates in a plan: withdraw the plan. It removes the plan's queued, retrying and failed scenes and moves
+the plan file to `plans/cancelled/`. A start of the plan ID is enough. Try `--dry-run` first:
+
+```bash
+cyanotrend --output "Output Data ISIN" cancel-plan 1f3a9c0d --dry-run
+cyanotrend --output "Output Data ISIN" cancel-plan 1f3a9c0d
+```
+
+Remove queued scenes without touching the plan, by plan and/or by the scene's UTC start date:
+
+```bash
+cyanotrend --output "Output Data ISIN" cancel-queued --dry-run                                  # all queued/retrying scenes
+cyanotrend --output "Output Data ISIN" cancel-queued                                            # remove them
+cyanotrend --output "Output Data ISIN" cancel-queued --plan 1f3a9c0d                            # only this plan's scenes
+cyanotrend --output "Output Data ISIN" cancel-queued --start 2025-01-01 --end 2025-12-31        # only these dates
+cyanotrend --output "Output Data ISIN" cancel-queued --include-failed                           # failed scenes too
+```
+
+Rules: running, publishing and finished scenes are never removed (stop `run` with Ctrl+C and let them finish
+or fail, then run the command again). A scene that another plan also lists is kept. `cancel-queued` leaves the
+plans in place; a plan it emptied is listed in the notes, remove it with `cancel-plan`. After a withdrawal you
+can run `plan` again with the right dates.
+
+## 8. Merge per day (after the scenes are done)
 
 One date (the date is the lake's local solar date; for US lakes it equals the UTC date):
 
@@ -167,19 +203,62 @@ A date range:
 cyanotrend --output "Output Data ISIN" daily --start 2024-08-01 --end 2024-08-31
 ```
 
+Only one state (much faster than every lake the scenes touch). It merges the lakes that touch the state and are
+filed under it (a lake shared with an earlier plan's state stays in that state's record). Other states' rows in
+the master and their folders are left exactly as they are:
+
+```bash
+cyanotrend --output "Output Data ISIN" daily --start 2024-08-14 --end 2024-08-14 --country USA --state-id 66186276B37442548568489
+```
+
+`--country` and `--state-id` go together (the IDs come from `regions`). Lakes that cannot be matched to any state
+are only merged by a `daily` run without these two options.
+
 Results: `Output Data ISIN/daily/<country>/<state>/<yyyy>/<mm>/<dd>/` (`<date>_lakes.csv`, `<date>_grid.nc`,
 `<date>_manifest.json`) and `Output Data ISIN/daily/master_merged_daily.csv`. Lakes with scenes still
 missing are listed under `waiting_lakes` in the manifest. Finish or retry those scenes and run `daily` again
 for the same dates.
 
-## 8. Check the stored files
+## 8b. Compare with NASA CyAN: find lakes, scatter plot
+
+Needs the state-limited `daily` run of section 8 for that state and date first, and `pip install matplotlib`
+once (or `pip install -e ".[plot]"`). NASA tiles are read from `reference_data/obpg_cyan`; a tile that is not
+cached is downloaded (Earthdata login in `~/.netrc`).
+
+1. List the lakes of the state that have both our daily row and a NASA value for that date, biggest first
+   (a lake with no name is shown as `(unnamed, Hylak_id N)`):
+
+```bash
+cyanotrend --output "Output Data ISIN" lakes --country USA --state-id 66186276B37442548568489 --date 2024-08-14
+cyanotrend --output "Output Data ISIN" lakes --country USA --state-id 66186276B37442548568489 --date 2024-08-14 --name huron --limit 10
+```
+
+2. Scatter plot for one or more lakes (a name or a Hylak_id; repeat `--lake` for several lakes, one date):
+
+```bash
+cyanotrend --output "Output Data ISIN" scatter --country USA --state-id 66186276B37442548568489 --date 2024-08-14 --lake "Lake Huron"
+cyanotrend --output "Output Data ISIN" scatter --country USA --state-id 66186276B37442548568489 --date 2024-08-14 --lake "Lake Huron" --lake 12345
+cyanotrend --output "Output Data ISIN" scatter --country USA --state-id 66186276B37442548568489 --date 2024-08-14 --lake 12345 --out-dir plots
+```
+
+(The names and the Hylak_id above are examples; take yours from the `lakes` list.)
+
+What the plot shows: one dot per NASA 300 m cell whose centre is inside the lake. x = NASA CyAN CI_cyano
+(DN converted with NASA's formula; DN 0 = 0), y = our CI_cyano of the ISIN bin that contains the cell centre
+(below our detection limit = 0). Only cells valid in both are plotted. The plot also has R, the regression
+line and n. Files go to `Output Data ISIN/compare/<country>/<state>/<yyyy>/<mm>/<dd>/`
+(`..._scatter.png` and `..._pairs.csv`, one row per dot). The command prints how many NASA cells were left
+out and why (NASA land or no data, no bin of ours at the cell centre, our bin without valid data). If the
+daily result for that state and date is missing, the command stops and prints the exact `daily` command to run.
+
+## 9. Check the stored files
 
 ```bash
 cyanotrend --output "Output Data ISIN" verify
 cyanotrend --output "Output Data ISIN" verify --scene-id 3f2b8c1e-5a47-4d0e-9b6a-1c2d3e4f5a6b
 ```
 
-## 9. Whole example: Michigan, 2024-08-14
+## 10. Whole example: Michigan, 2024-08-14
 
 ```bash
 conda activate s3olci-daily
@@ -192,16 +271,16 @@ cyanotrend --output "Output Data ISIN" status
 cyanotrend --output "Output Data ISIN" scenes --status failed
 cyanotrend --output "Output Data ISIN" retry-failed        # only if something failed
 cyanotrend --output "Output Data ISIN" run --workers 5 --once
-cyanotrend --output "Output Data ISIN" daily --start 2024-08-14 --end 2024-08-14
+cyanotrend --output "Output Data ISIN" daily --start 2024-08-14 --end 2024-08-14 --country USA --state-id 66186276B37442548568489
 cyanotrend --output "Output Data ISIN" verify
 ```
 
-## 10. Whole example: Florida, 2026-06-28
+## 11. Whole example: Florida, 2026-06-28
 
 ```bash
 cyanotrend --output "Output Data ISIN" plan --start 2026-06-28 --end 2026-06-28 --country USA --state-id 66186276B65591139260314
 cyanotrend --output "Output Data ISIN" run --workers 5 --once
-cyanotrend --output "Output Data ISIN" daily --start 2026-06-28 --end 2026-06-28
+cyanotrend --output "Output Data ISIN" daily --start 2026-06-28 --end 2026-06-28 --country USA --state-id 66186276B65591139260314
 ```
 
 ## Machine-readable output

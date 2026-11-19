@@ -127,10 +127,15 @@ class DailyPublisher:
         remove = []
         pattern = f"*/*/{day.year:04d}/{day.month:02d}/{day.day:02d}/{stamp}_manifest.json"
         for old in (self.root.glob(pattern) if replace_ids is None else ()):
-            for suffix in ("lakes.csv", "grid.nc", "manifest.json"):
+            for suffix in ("lakes.csv", "grid.nc", "science.nc", "manifest.json"):
                 relative = str(old.with_name(f"{stamp}_{suffix}").relative_to(self.root))
                 if relative not in targets:
                     remove.append(relative)
+        for target in sorted(targets):  # a rewritten folder without science cells must not keep an old science file
+            if target.endswith("_manifest.json"):
+                sibling = target[: -len("manifest.json")] + "science.nc"
+                if sibling not in targets and sibling not in remove:
+                    remove.append(sibling)
         all_products = list(products.items()) + [
             (self.backup.name, previous), (self.master.name, new_master),
         ]
@@ -154,7 +159,8 @@ def publish_day(workspace, day, rows, cells, manifest, lake_scene_ids, region_of
     exactly one region, so a lake shared between states or countries is written once.
     replace_ids: Hylak_ids a run limited to one state is allowed to replace (None: the whole date).
     """
-    from .merge import CSV_COLUMNS, _write_csv, _write_daily_grid, day_folder
+    from .merge import CSV_COLUMNS, _write_csv, _write_daily_grid, day_folder, detection_limit
+    from .science import write_daily_science
 
     groups = {}
     for hylak_id, region in region_of.items():
@@ -207,6 +213,9 @@ def publish_day(workspace, day, rows, cells, manifest, lake_scene_ids, region_of
             prefix = day.isoformat()
             _write_csv(folder / f"{prefix}_lakes.csv", state_rows)
             _write_daily_grid(folder / f"{prefix}_grid.nc", day, manifest["within_pass_method"], state_cells)
+            if state_cells and all(len(c) > 7 for c in state_cells):
+                write_daily_science(folder / f"{prefix}_science.nc", day, manifest["within_pass_method"],
+                                    state_cells, state_rows, detection_limit())
             atomic_json(folder / f"{prefix}_manifest.json", state_manifest)
             for path in folder.iterdir():
                 products[str(relative / path.name)] = path

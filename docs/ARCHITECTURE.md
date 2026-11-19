@@ -169,7 +169,8 @@ validly. The number of scenes with a valid view of each bin is stored
 columns count bins. Calculated rows/cells are
 partitioned by country and state for every country:
 `<output>/daily/<country>/<state>/YYYY/MM/DD/YYYY-MM-DD_lakes.csv`, with
-`YYYY-MM-DD_manifest.json` and `YYYY-MM-DD_grid.nc` beside it. A lake that borders several
+`YYYY-MM-DD_manifest.json`, `YYYY-MM-DD_grid.nc` and `YYYY-MM-DD_science.nc` (all science layers on exact ISIN cells,
+`daily/science.py`) beside it. A lake that borders several
 states or countries (Lake Michigan, Lake Erie) has exactly one record per date, under the
 region whose plan processed it first (`daily/regions.py`): (1) the earliest-created plan whose
 country/state touches the lake and that listed one of its scenes; (2) otherwise the state of

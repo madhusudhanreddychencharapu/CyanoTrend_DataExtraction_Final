@@ -93,3 +93,26 @@ not migrated. Scene ZIPs contain one statistics CSV, one science NetCDF and
 metadata JSON. NASA details are in that JSON and daily manifests; no separate
 comparison CSV is packaged. NASA coverage summaries in state manifests are
 labelled date-wide, while per-lake results are filtered to that state's lakes.
+
+## Science NetCDF and rebuilding the columns
+
+`<date>_science.nc` (see `daily/science.py`) carries the layers behind these columns, one cell per ISIN bin on lake
+cells, so every count and statistic can be rebuilt from it at any time: `python -m cyanotrend reproduce <file>`.
+
+| CSV column | From the science file |
+|---|---|
+| `Lake_cells` | cells with this `Hylak_id` |
+| `primary_retained_cells` | `valid_water_mask` = 1 |
+| `Cloud_excluded_any_scene_cells` | `cloud_excluded_mask` = 1 |
+| `Cloud_excluded_with/without_valid_daily_CI_cells` | the same, split by `DN` != 255 / = 255 |
+| `ci_input_valid_cells` | `DN` != 255 |
+| `ci_candidate_cells`, `CI_valid_cells` | `CI` has a value |
+| `CI_cyano_detectable_cells` | `DN` != 255 and `CI_cyano` >= the file's `CI_cyano_detection_limit` |
+| `Non_detectable_cells` | `DN` != 255 and below the limit |
+| `No_valid_data_cells` | `DN` = 255 |
+| `Cells_valid_in_two_or_more_scenes` | `scenes_valid` >= 2 |
+| `NASA_CI_Cyano_detectable_cells` | the lake table (`lake_NASA_CI_Cyano_detectable_cells`; -1 = blank) |
+| `<index>_valid_cells/mean/median/p10/p90/max` | the finite values of that index layer |
+
+Daily `rhos` bands are combined like the indices: the highest pass value per band, independently, so a bin seen by two
+passes can mix them. Masks are set when any pass set them.

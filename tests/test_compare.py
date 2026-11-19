@@ -223,3 +223,52 @@ def test_cli_commands_exist_and_lakes_prints_a_table(ws, capsys):
     assert main(["--output", str(ws.output), "lakes", "--country", "USA", "--state-id", "MI", "--date", DAY]) == 0
     out = capsys.readouterr().out
     assert "Lake A" in out and "(unnamed, Hylak_id 303)" in out and "Lake B" not in out
+
+
+def test_scatter_default_is_linear_and_log_density_views_get_their_own_files(ws):
+    _daily_result(ws)
+    _nasa_tile(ws.references / "obpg_cyan")
+    default = compare.scatter(ws, "USA", "MI", DAY, ["Lake A"], polygons=POLY)
+    assert default["png"].endswith("2024-08-14_lake_101_scatter.png")
+    before = open(default["png"], "rb").read()
+    table_before = open(default["pairs_csv"], "rb").read()
+    names = {}
+    for key, options in (("log", {"log": True}), ("density", {"density": True}), ("both", {"log": True, "density": True})):
+        result = compare.scatter(ws, "USA", "MI", DAY, ["Lake A"], polygons=POLY, **options)
+        names[key] = result["png"]
+        png = open(result["png"], "rb").read()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 10_000
+        assert result["overall"] == default["overall"] and result["lakes"] == default["lakes"]   # same numbers, other picture
+    assert names["log"].endswith("2024-08-14_lake_101_scatter_log.png")
+    assert names["density"].endswith("2024-08-14_lake_101_scatter_density.png")
+    assert names["both"].endswith("2024-08-14_lake_101_scatter_log_density.png")
+    assert open(default["png"], "rb").read() == before                  # the linear plot was not touched
+    assert open(default["pairs_csv"], "rb").read() == table_before      # nor the pairs table
+    several = compare.scatter(ws, "USA", "MI", DAY, ["Lake A", "303"], polygons=POLY, density=True, log=True)
+    assert several["png"].endswith("2024-08-14_lakes_101_303_scatter_log_density.png")
+    assert open(several["png"], "rb").read()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_axis_layouts_keep_zero_apart_from_real_values():
+    limit = detection_limit()
+    linear = compare._axis_layout(0.03, False, bins=70)
+    assert compare._to_axis([0.0, 0.01], linear).tolist() == [0.0, 0.01]            # linear: values are not changed
+    assert np.digitize(0.0, linear["edges"]) - 1 == 0 and linear["edges"][-1] == pytest.approx(0.03)
+    lay = compare._axis_layout(0.03, True, bins=70)
+    spot = compare._to_axis([0.0, limit, 1e-3, 0.03], lay)
+    assert spot[1:].tolist() == pytest.approx([np.log10(limit), -3.0, np.log10(0.03)])
+    assert spot[0] < spot[1] and lay["lo"] < spot[0]                                  # zero has its own place below the limit
+    bins = np.digitize(spot, lay["edges"]) - 1
+    assert bins[0] == 2 and bins[1] >= 7                                              # empty bins between zero and the first value
+    assert lay["edges"][-1] == pytest.approx(np.log10(0.03))
+    plain = compare._axis_layout(0.03, True)
+    assert plain["zero"] < plain["floor"] and plain["lo"] < plain["zero"]
+    assert compare._to_axis([1e-9], plain)[0] == pytest.approx(plain["floor"])        # below the limit counts as the limit
+
+
+def test_cli_scatter_log_and_density_are_opt_in():
+    base = ["scatter", "--country", "USA", "--state-id", "MI", "--date", DAY, "--lake", "Lake A"]
+    a = parser().parse_args(base)
+    assert a.log is False and a.density is False
+    a = parser().parse_args(base + ["--log", "--density"])
+    assert a.log is True and a.density is True

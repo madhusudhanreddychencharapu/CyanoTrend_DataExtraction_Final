@@ -121,6 +121,29 @@ Separate scratch disk, or a second job at the same time (each job needs its own 
 cyanotrend --output "Output Data ISIN" --scratch .scratch_v3 run --workers 5 --once
 ```
 
+### Merge each date by itself while the scenes run (optional): `--auto-daily`
+
+```bash
+cyanotrend --output "Output Data ISIN" run --workers 5 --auto-daily
+cyanotrend --output "Output Data ISIN" run --workers 5 --once --auto-daily     # exits after the last merge
+```
+
+Off unless you write `--auto-daily`; without it `run` behaves exactly as before and you merge by hand (section 8).
+With it, `run` merges a date as soon as every scene that can feed that state's lakes, from the UTC day before to the
+UTC day after, is final: `done`, `skipped_no_lakes`, or `failed` after its three attempts (the same three days `daily`
+looks at). The merge is the section 8 command for one date and one state
+(`daily --start D --end D --country C --state-id S`) run as a separate process, **one merge at a time**, oldest date
+first. Its log is `Output Data ISIN/logs/daily_<country>_<state>_<date>_<time>.log`. Every merge prints one line when
+it ends, for example `merged USA/MI 2024-08-14: 412 complete, 3 partial, 5 lake(s) waiting, 0 unavailable`.
+
+- A failed scene does not hold a date back. Its lakes come out `partial` (flagged in the CSV) and the date is merged.
+- If scene statuses change after a merge (`retry-failed`, another plan adds scenes of that date) the date is merged again.
+- It never queues scenes. If a date needs satellite passes that no plan lists ("not planned"), the line says how many
+  and prints the `plan` command that would add them; you decide whether to run it.
+- Ctrl+C: no new merge starts, a merge that is already running finishes, then `run` exits. With `--once`, `run` waits for
+  the last merge and exits.
+- A merge that fails is recorded (see `progress`, and the log) and is not repeated in the same `run`; the next `run` tries it once more.
+
 ## 5. Watch progress (second terminal)
 
 `status` shows the totals, whether a `run` is active, the scenes being worked on, and a short
@@ -134,6 +157,25 @@ cyanotrend --output "Output Data ISIN" scenes --status failed
 cyanotrend --output "Output Data ISIN" scenes --status done
 cyanotrend --output "Output Data ISIN" coverage
 ```
+
+`progress` is the same idea per state and solar date: what is merged, what still waits and why. It reads the saved
+plans and the scene ledger and changes nothing (it can run while `run` is active):
+
+```bash
+cyanotrend --output "Output Data ISIN" progress
+```
+
+`states` has one row per planned state: `dates_in_plans`, `merged`, `ready_to_merge` (all scenes final, not merged
+yet or changed since), `waiting_for_scenes`, `merge_failed`, `nothing_to_merge` (every scene failed or had no lakes),
+`no_scenes`. Below it, only when there is something to show:
+
+- `ready_to_merge`: dates that can be merged now (`run --auto-daily` does it by itself, or use section 8).
+- `waiting_for_scenes`: dates and how many of their scenes (UTC day before, same day, day after) are not final yet.
+- `merged_but_lakes_waiting`: dates merged earlier whose lakes still wait, split into scenes that are in a plan but not
+  finished (they merge again when done) and scenes that are in no plan (`scenes_in_no_plan`).
+- `add_missing_scenes_with`: the `plan` command that would add the scenes that are in no plan.
+- `merge_failed`: dates whose last merge failed, with the error and the log file.
+- `recent_merges`: the last 10 merges, by hand (`manual`) or by `run --auto-daily` (`auto`).
 
 One scene in detail (attempts, stage times, error, archive path); the ID comes from `scenes`:
 
@@ -215,9 +257,28 @@ cyanotrend --output "Output Data ISIN" daily --start 2024-08-14 --end 2024-08-14
 are only merged by a `daily` run without these two options.
 
 Results: `Output Data ISIN/daily/<country>/<state>/<yyyy>/<mm>/<dd>/` (`<date>_lakes.csv`, `<date>_grid.nc`,
-`<date>_manifest.json`) and `Output Data ISIN/daily/master_merged_daily.csv`. Lakes with scenes still
+`<date>_science.nc`, `<date>_manifest.json`) and `Output Data ISIN/daily/master_merged_daily.csv`. Lakes with scenes still
 missing are listed under `waiting_lakes` in the manifest. Finish or retry those scenes and run `daily` again
 for the same dates.
+
+**The science file `<date>_science.nc`** (one per state and date) holds every layer of the single-scene science
+NetCDF: the 9 `rhos` bands (`rhos_490` ... `rhos_884`), `CI`, `CI_cyano`, `NDCI`, `MPH`, `FAI`, all 12 masks
+(`valid_water_mask`, `cloud_excluded_mask`, `ci_valid_mask`, ...), `DN`, `scenes_valid`, `Hylak_id`,
+`lake_support_mask`, `native_source_match_mask` and `footprint_area`. There is no 300 m resampling: one cell is
+exactly one ISIN bin (about 290 m), and `row`, `col`, `bin`, `latitude` and `longitude` give that bin. Each pass is
+binned by area weight, then the day takes the highest pass value per layer, the same way as the indices (so each
+`rhos` band is its own highest value, and a bin seen by two passes can mix them). A mask is 1 when any pass set it,
+0 when a pass saw the bin and none did, and -1 when no pass saw it. Layers hold values on lake cells only. The file
+opens in QGIS/GDAL (tested) and SNAP (not tested here). `<date>_grid.nc` is unchanged.
+
+The first merge of a date after this change rebuilds each scene's bin file from its native files (needs no new
+download and no new processing; it is slower, once per scene). Native files from older runs that lack a layer give an
+empty layer, and the scene bin file lists what was missing (`native_variables_missing`).
+
+Every merge, by hand or from `run --auto-daily`, is also recorded in the queue database (date, state, start and end,
+lakes complete/partial/waiting/unavailable, log file). Nothing extra to type: look at it with
+`cyanotrend --output "Output Data ISIN" progress`. To have each date merged while the scenes are still running, use
+`run --auto-daily` (section 4).
 
 ## 8b. Compare with NASA CyAN: find lakes, scatter plot
 
@@ -251,7 +312,38 @@ line and n. Files go to `Output Data ISIN/compare/<country>/<state>/<yyyy>/<mm>/
 out and why (NASA land or no data, no bin of ours at the cell centre, our bin without valid data). If the
 daily result for that state and date is missing, the command stops and prints the exact `daily` command to run.
 
+3. Other views of the same plot (optional). Without these options the plot is the usual linear one and nothing
+   changes. Each option writes its own file, so the linear PNG is never overwritten:
+
+```bash
+cyanotrend --output "Output Data ISIN" scatter --country USA --state-id 66186276B37442548568489 --date 2024-08-14 --lake "Lake Huron" --log
+cyanotrend --output "Output Data ISIN" scatter --country USA --state-id 66186276B37442548568489 --date 2024-08-14 --lake "Lake Huron" --density
+cyanotrend --output "Output Data ISIN" scatter --country USA --state-id 66186276B37442548568489 --date 2024-08-14 --lake "Lake Huron" --log --density
+```
+
+- `--log`: log-log axes. NASA stores whole-number DN values on a log scale, so on a linear axis the vertical
+  columns at low values are less than a pixel apart and merge into one smear; on a log axis they are evenly
+  spaced. A value of exactly 0 cannot sit on a log axis, so it gets its own place labelled `0`, left of and
+  below the first tick, behind a dotted line.
+- `--density`: instead of dots, colour = number of NASA cells per small square (log colour scale). Use it when
+  many dots lie on top of each other, for example the cells that are 0 in both NASA and ours show as one bright
+  square. With several `--lake` options there is one panel per lake.
+- Files: `..._scatter_log.png`, `..._scatter_density.png`, `..._scatter_log_density.png`. R, slope and n are the
+  same as in the linear plot (they are always computed on the real values); only the picture changes.
+
 ## 9. Check the stored files
+
+Rebuild a day's lakes CSV columns from its science file alone and compare them with the CSV (the 13 count columns,
+the statistics of all 5 indices and the NASA count; nothing is written, no workspace needed):
+
+```bash
+cyanotrend reproduce "Output Data ISIN/daily/USA/Michigan/2024/08/14/2024-08-14_science.nc"
+```
+
+It reads `2024-08-14_lakes.csv` from the same folder (or give `--csv PATH`) and ends with `ok: true`, or lists each
+value that differs.
+
+Check the processed scenes and the master CSV:
 
 ```bash
 cyanotrend --output "Output Data ISIN" verify
@@ -272,8 +364,12 @@ cyanotrend --output "Output Data ISIN" scenes --status failed
 cyanotrend --output "Output Data ISIN" retry-failed        # only if something failed
 cyanotrend --output "Output Data ISIN" run --workers 5 --once
 cyanotrend --output "Output Data ISIN" daily --start 2024-08-14 --end 2024-08-14 --country USA --state-id 66186276B37442548568489
+cyanotrend --output "Output Data ISIN" progress
 cyanotrend --output "Output Data ISIN" verify
 ```
+
+Instead of the two `run`/`daily` lines you can let `run` do the merge: `run --workers 5 --once --auto-daily`
+(add `retry-failed` and the same `run` line again if something failed; the date is merged again by itself).
 
 ## 11. Whole example: Florida, 2026-06-28
 
@@ -290,6 +386,7 @@ cyanotrend --output "Output Data ISIN" daily --start 2026-06-28 --end 2026-06-28
 ```bash
 cyanotrend --output "Output Data ISIN" --json status
 cyanotrend --output "Output Data ISIN" --json scenes --status failed
+cyanotrend --output "Output Data ISIN" --json progress
 ```
 
 More detail: [docs/RUNNING.md](docs/RUNNING.md), [docs/DAILY_COLUMNS.md](docs/DAILY_COLUMNS.md).

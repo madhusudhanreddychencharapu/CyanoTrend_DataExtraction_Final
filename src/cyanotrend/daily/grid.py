@@ -13,7 +13,10 @@ and has the same area to within 0.002% between 80 S and 80 N.
 Within one scene, each native lake pixel is spread over its footprint (the
 parallelogram spanned by its neighbouring pixels) and shared among the bins it
 overlaps in proportion to the exact overlap area (no sampling points). A bin's value
-for each index is the area-weighted mean of the valid pixels overlapping it.
+for each index is the area-weighted mean of the valid pixels overlapping it. The nine rhos bands are
+binned the same way (valid: primary valid water with all nine bands finite), and ten more native masks are
+kept as "some overlapping pixel has the mask set" flags, so the daily stage can rebuild every layer of
+the single-scene science product.
 Pixels never decide a bin by their centre alone: a pixel and a bin are about
 the same size, so centre-point binning would mis-assign roughly half the area.
 Scenes are combined later, by the daily stage, with the per-bin maximum.
@@ -33,9 +36,9 @@ import uuid
 
 import numpy as np
 
-from .features import INDICES, FLAGS
+from .features import INDICES, FLAGS, BANDS, MASKS, NATIVE_BANDS, NATIVE_MASKS
 
-SCHEMA = "cyanotrend-isin-grid-1"
+SCHEMA = "cyanotrend-isin-grid-2"  # 2: adds rhos bands and masks; schema-1 files are rebuilt from the native files
 N_ROWS = 69120
 # Authalic radius of the WGS84 ellipsoid: a sphere with the same surface area, so bin areas are
 # true ground areas. Bin numbering depends only on angles, not on this radius (NASA quotes
@@ -223,6 +226,7 @@ def native_pixels(path):
     """Read one native compact lake-pixel file (one processing window)."""
     import netCDF4
 
+    absent = set()
     with netCDF4.Dataset(path) as ds:
         names = set(ds.variables)
 
@@ -247,6 +251,19 @@ def native_pixels(path):
             indices[name] = np.where(read(f"{name.lower()}_valid_mask", 0) == 1, read(name), np.nan)
         flags = {"primary_retained": read("valid_water_mask", 0) == 1,
                  "cloud_excluded": read("cloud_excluded_mask", 0) == 1}
+
+        def optional(name, fill):  # older compact files may lack a layer: recorded, never invented
+            if name in names:
+                return read(name, fill)
+            absent.add(name)
+            return np.full(lat.shape, fill)
+
+        rhos = {out: optional(native, np.nan) for out, native in NATIVE_BANDS.items()}
+        rhos_ok = flags["primary_retained"].copy()
+        for values in rhos.values():
+            rhos_ok &= np.isfinite(values)
+        bands = {out: np.where(rhos_ok, values, np.nan) for out, values in rhos.items()}
+        masks = {out: optional(native, 0) == 1 for out, native in NATIVE_MASKS.items()}
     located = np.isfinite(lat) & np.isfinite(lon) & (srow >= 0) & (scol >= 0)
     valid &= located
     value = np.where(valid & np.isfinite(ci) & (ss665 > 0), ci, 0.0)
@@ -258,6 +275,9 @@ def native_pixels(path):
         "valid_source": valid_source,
         "indices": {k: v[located] for k, v in indices.items()},
         "flags": {k: v[located] for k, v in flags.items()},
+        "bands": {k: v[located] for k, v in bands.items()},
+        "masks": {k: v[located] for k, v in masks.items()},
+        "absent": sorted(absent),
     }
 
 
@@ -318,7 +338,10 @@ def _empty_bins():
     for name in INDICES:
         out[f"{name}_weight"] = np.zeros(0)
         out[f"{name}_sum"] = np.zeros(0)
-    for name in FLAGS:
+    out["bands_weight"] = np.zeros(0)
+    for name in BANDS:
+        out[f"{name}_sum"] = np.zeros(0)
+    for name in FLAGS + MASKS:
         out[name] = np.zeros(0, dtype=bool)
     return out
 
@@ -336,7 +359,9 @@ def _reduce(parts):
         for suffix in ("weight", "sum"):
             field = f"{name}_{suffix}"
             out[field] = np.bincount(inverse, np.concatenate([p[field] for p in parts]), m)
-    for name in FLAGS:
+    for field in ["bands_weight"] + [f"{name}_sum" for name in BANDS]:
+        out[field] = np.bincount(inverse, np.concatenate([p[field] for p in parts]), m)
+    for name in FLAGS + MASKS:
         seen = np.concatenate([p[name] for p in parts]).astype(float)
         out[name] = np.bincount(inverse, seen, m) > 0
     return out
@@ -454,6 +479,8 @@ def pixels_to_bins(pixels, chunk=CHUNK_PIXELS):
     (ax, ay), (bx, by) = _neighbour_vectors(x, y, pixels["row"], pixels["col"])
     indices = pixels["indices"]
     flags = pixels["flags"]
+    bands = pixels.get("bands") or {}
+    masks = pixels.get("masks") or {}
     parts = []
     for s in range(0, n, chunk):
         e = min(s + chunk, n)
@@ -469,6 +496,12 @@ def pixels_to_bins(pixels, chunk=CHUNK_PIXELS):
             record[f"{name}_sum"] = np.where(ok, w * value, 0.0)
         for name in FLAGS:
             record[name] = flags[name][pix]
+        ok = np.isfinite(bands[BANDS[0]][pix]) if bands else np.zeros(pix.size, dtype=bool)
+        record["bands_weight"] = np.where(ok, w, 0.0)
+        for name in BANDS:
+            record[f"{name}_sum"] = np.where(ok, w * bands[name][pix], 0.0) if bands else np.zeros(pix.size)
+        for name in MASKS:
+            record[name] = masks[name][pix] if name in masks else np.zeros(pix.size, dtype=bool)
         parts.append(_reduce([record]))
     return _reduce(parts)
 
@@ -478,6 +511,13 @@ def area_means(bins):
     with np.errstate(invalid="ignore", divide="ignore"):
         return {name: np.where(bins[f"{name}_weight"] > 0, bins[f"{name}_sum"] / bins[f"{name}_weight"], np.nan)
                 for name in INDICES}
+
+
+def band_means(bins):
+    """Area-weighted mean per rhos band over pixels valid for all bands (NaN where none)."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return {name: np.where(bins["bands_weight"] > 0, bins[f"{name}_sum"] / bins["bands_weight"], np.nan)
+                for name in BANDS}
 
 
 # ---------------------------------------------------------------------------
@@ -543,16 +583,18 @@ def write_scene_grid(native_dir, scene, out_path=None, *, native_files=None):
     if not files:
         raise ValueError(f"No native lake-pixel files in {native_dir}")
     out_path = Path(out_path) if out_path else grid_path(native_dir)
-    parts, sources, n_pixels, valid_sources = [], [], 0, set()
+    parts, sources, n_pixels, valid_sources, absent = [], [], 0, set(), set()
     for path in files:  # one file per processing window; pixel neighbours never cross files
         pixels = native_pixels(path)
         n_pixels += int(pixels["lat"].size)
         valid_sources.add(pixels["valid_source"])
+        absent.update(pixels.get("absent", ()))
         if pixels["lat"].size:
             parts.append(pixels_to_bins(pixels))
         sources.append({"file": path.name, "sha256": digest(path)})
     bins = _reduce(parts)
     means = area_means(bins)
+    band_avg = band_means(bins)
     row, col = bin_row_col(bins["key"]) if bins["key"].size else (np.zeros(0, dtype=np.int64),) * 2
     lon, lat = bin_centre_row_col(row, col)
     attrs = {
@@ -571,6 +613,9 @@ def write_scene_grid(native_dir, scene, out_path=None, *, native_files=None):
         "value_definition": VALUE_DEFINITION,
         "valid_definition": "; ".join(sorted(valid_sources)) or VALID_DEFINITION,
         "method": "area: each pixel footprint is shared among the bins it overlaps in proportion to overlap area; bin value = area-weighted mean of the valid pixels, independently per index",
+        "bands_definition": "rhos_*: area-weighted mean over pixels that are primary valid water with all nine rhos bands finite; rhos_valid_area is their footprint area",
+        "masks_definition": "*_any: at least one overlapping native observation has the mask set (valid_water_mask is primary_retained_any)",
+        "native_variables_missing": json.dumps(sorted(absent)),
         "cloud_diagnostic": "cloud_excluded_any: at least one overlapping native observation has cloud_excluded_mask=1; not a whole-bin cloud classification",
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "software_version": __import__("cyanotrend").__version__,
@@ -595,9 +640,17 @@ def write_scene_grid(native_dir, scene, out_path=None, *, native_files=None):
                              f"footprint area of valid {name} pixels overlapping the bin", "m2"))
                 spec.append((f"{name}_area_mean", "f4", means[name],
                              f"area-weighted mean of valid {name} pixels overlapping the bin (NaN: none)", "1"))
+            spec.append(("rhos_valid_area", "f4", bins["bands_weight"],
+                         "footprint area of pixels valid for all rhos bands overlapping the bin", "m2"))
+            for name in BANDS:
+                spec.append((f"{name}_area_mean", "f4", band_avg[name],
+                             f"area-weighted mean of valid {name} pixels overlapping the bin (NaN: none)", "1"))
             for name in FLAGS:
                 spec.append((f"{name}_any", "u1", bins[name].astype(np.uint8),
                              f"at least one overlapping native observation is {name}", "1"))
+            for name in MASKS:
+                spec.append((f"{name}_any", "u1", bins[name].astype(np.uint8),
+                             f"at least one overlapping native observation has {name} set", "1"))
             for name, dtype, values, long_name, units in spec:
                 var = ds.createVariable(name, dtype, ("bin",), zlib=True, complevel=4, shuffle=True, fill_value=False)
                 var.setncatts({"long_name": long_name, "units": units})
@@ -630,10 +683,16 @@ def read_scene_grid(path):
         key = np.ma.filled(ds.variables["bin"][:], 0).astype(np.int64)
         values = {name: np.ma.filled(ds.variables[f"{name}_area_mean"][:], np.nan).astype(float) for name in INDICES}
         flags = {name: np.ma.filled(ds.variables[f"{name}_any"][:], 0) == 1 for name in FLAGS}
+        bands = {name: np.ma.filled(ds.variables[f"{name}_area_mean"][:], np.nan).astype(float) for name in BANDS}
+        masks = {name: np.ma.filled(ds.variables[f"{name}_any"][:], 0) == 1 for name in MASKS}
+        footprint = np.ma.filled(ds.variables["footprint_area"][:], 0.0).astype(float)
     order = np.argsort(key, kind="stable")
     return {
         "attrs": attrs,
         "key": key[order],
         "values": {k: v[order] for k, v in values.items()},
         "flags": {k: v[order] for k, v in flags.items()},
+        "bands": {k: v[order] for k, v in bands.items()},
+        "masks": {k: v[order] for k, v in masks.items()},
+        "footprint": footprint[order],
     }

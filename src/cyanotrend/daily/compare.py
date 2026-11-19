@@ -370,11 +370,134 @@ def _plot(path, series, state, day, overall):
     plt.close(fig)
 
 
-def scatter(workspace, country, state_id, day, lakes, out_dir=None, polygons=None, cache=None):
+def _axis_layout(top, log, bins=None):
+    """Axis range and where zero sits. Linear: zero is the middle of the first bin. Log: zero cannot be drawn on a log
+    axis, so it gets its own place below the detection limit, with an empty gap between it and the first real value."""
+    if not log:
+        if bins:
+            width = top / (bins - 0.5)
+            lo = -width / 2.0
+            edges = lo + width * np.arange(bins + 1)
+        else:
+            lo, edges = -top * 0.02, None
+        return {"log": False, "lo": lo, "hi": top, "zero": 0.0, "floor": None, "edges": edges}
+    floor = float(np.log10(detection_limit()))
+    top_t = float(np.log10(top))
+    if bins:
+        width = (top_t - floor) / (bins - 7.25)
+        lo = floor - 7.25 * width
+        zero = lo + 2.5 * width
+        edges = lo + width * np.arange(bins + 1)
+    else:
+        zero = floor - 0.5
+        lo, edges = zero - 0.25, None
+    return {"log": True, "lo": lo, "hi": top_t, "zero": zero, "floor": floor, "edges": edges}
+
+
+def _to_axis(values, lay):
+    """Position of values on the axis: unchanged when linear; log10 when log (zero goes to its own place)."""
+    v = np.asarray(values, dtype=float)
+    if not lay["log"]:
+        return v
+    out = np.full(v.shape, lay["zero"])
+    positive = v > 0
+    out[positive] = np.log10(np.maximum(v[positive], detection_limit()))
+    return out
+
+
+def _decorate(ax, lay, top, xlabel, ylabel):
+    ax.set_xlim(lay["lo"], lay["hi"])
+    ax.set_ylim(lay["lo"], lay["hi"])
+    ax.set_aspect("equal", adjustable="box")
+    if lay["log"]:
+        limit = detection_limit()
+        decades = [d for d in (1e-4, 1e-3, 1e-2, 1e-1, 1.0) if limit <= d <= top]
+        ticks = [lay["zero"]] + [float(np.log10(d)) for d in decades]
+        labels = ["0"] + [f"{d:g}" for d in decades]
+        minor = [float(np.log10(m * 10.0 ** e)) for e in range(-5, 1) for m in range(2, 10) if limit <= m * 10.0 ** e <= top]
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels)
+        ax.set_yticks(ticks)
+        ax.set_yticklabels(labels)
+        ax.set_xticks(minor, minor=True)
+        ax.set_yticks(minor, minor=True)
+        gap = (lay["zero"] + lay["floor"]) / 2.0  # dotted line: everything left/below it is exactly 0
+        ax.axvline(gap, color="0.6", linestyle=":", linewidth=0.8)
+        ax.axhline(gap, color="0.6", linestyle=":", linewidth=0.8)
+    ax.plot([lay["lo"], lay["hi"]], [lay["lo"], lay["hi"]], color="black", linestyle="--", linewidth=1.2)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+
+def _plot_view(path, series, state, day, overall, log=False, density=False):
+    """Optional views of the same pairs: log axes and/or a density (count) map. The default linear plot is _plot."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LogNorm
+
+    drawn = [s for s in series if s["x"].size]
+    top = max(max(float(s["x"].max()), float(s["y"].max())) for s in drawn) if drawn else 0.0
+    top = top * 1.05 if top > 0 else 1e-4
+    if log:
+        top = max(top, 2.0 * detection_limit())
+    lay = _axis_layout(top, log, bins=70 if density else None)
+    how = ", log axis" if log else ""
+    xlabel = "NASA CyAN CI_cyano (daily, 300 m cell)" + how
+    ylabel = "Our CI_cyano (daily, ISIN bin at the cell centre)" + how
+    box = {"boxstyle": "round", "facecolor": "white", "alpha": 0.85, "edgecolor": "0.7"}
+    stats = (f"R = {overall['r']:.3f}\ny = {overall['slope']:.3f}x {overall['intercept']:+.2e}\n"
+             f"n = {overall['cells']:,}\ndashed line = 1:1")
+    if not density:
+        fig, ax = plt.subplots(figsize=(6.8, 6.8))
+        total = sum(item["x"].size for item in series)
+        size, alpha = (24, 0.6) if total < 300 else (10, 0.45) if total < 3000 else (3, 0.35)
+        for k, item in enumerate(series):
+            ax.scatter(_to_axis(item["x"], lay), _to_axis(item["y"], lay), s=size, alpha=alpha,
+                       color=plt.get_cmap("tab10")(k % 10), linewidths=0, rasterized=True, clip_on=False,
+                       label=f"{item['label']} (n={item['x'].size:,}, R={item['r']:.2f})")
+        _decorate(ax, lay, top, xlabel, ylabel)
+        if np.isfinite(overall["slope"]):
+            ax.text(0.03, 0.97, stats, transform=ax.transAxes, va="top", ha="left", bbox=box)
+        ax.set_title(f"{state}, {day.isoformat()}")
+        ax.legend(loc="lower right", fontsize=8, markerscale=4 if size < 10 else 1.2, framealpha=0.85)
+        ax.grid(alpha=0.25)
+        fig.tight_layout()
+    else:
+        n = len(series)
+        cols = min(n, 3)
+        rows = -(-n // cols)
+        fig, axes = plt.subplots(rows, cols, figsize=(5.2 * cols + 1.4, 5.2 * rows + 0.6), squeeze=False,
+                                 constrained_layout=True)
+        hists = [np.histogram2d(_to_axis(item["x"], lay), _to_axis(item["y"], lay), bins=[lay["edges"], lay["edges"]])[0]
+                 for item in series]
+        vmax = max(2.0, max(float(h.max()) for h in hists))
+        mesh = None
+        for k, ax in enumerate(axes.ravel()):
+            if k >= n:
+                ax.set_visible(False)
+                continue
+            mesh = ax.pcolormesh(lay["edges"], lay["edges"], np.ma.masked_equal(hists[k].T, 0), norm=LogNorm(1, vmax),
+                                 cmap="viridis", rasterized=True)
+            _decorate(ax, lay, top, xlabel, ylabel)
+            ax.set_title(f"{series[k]['label']} (n={series[k]['x'].size:,}, R={series[k]['r']:.2f})", fontsize=10)
+            ax.grid(alpha=0.25)
+            if n == 1 and np.isfinite(overall["slope"]):
+                ax.text(0.03, 0.97, stats, transform=ax.transAxes, va="top", ha="left", bbox=box)
+        fig.colorbar(mesh, ax=list(axes.ravel()[:n]), shrink=0.7, label="NASA cells per square (log colour scale)")
+        fig.suptitle(f"{state}, {day.isoformat()}")
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+
+
+def scatter(workspace, country, state_id, day, lakes, out_dir=None, polygons=None, cache=None, log=False, density=False):
     """Scatter of NASA CyAN CI_cyano (x) against our CI_cyano (y), one NASA cell per dot, for chosen lakes.
 
     lakes: names or Hylak_ids. polygons / cache can be supplied (tests); otherwise HydroLAKES and the
     workspace's NASA tile cache are used.
+    log / density: optional views of the same pairs, saved under their own names (_scatter_log.png, _scatter_density.png,
+    _scatter_log_density.png). Without them the plot is the usual linear one and its file name is unchanged.
     """
     import pandas as pd
 
@@ -418,8 +541,12 @@ def scatter(workspace, country, state_id, day, lakes, out_dir=None, polygons=Non
     folder = Path(out_dir) if out_dir else workspace.output / "compare" / files["folder"].relative_to(workspace.output / "daily")
     folder.mkdir(parents=True, exist_ok=True)
     stem = f"{day.isoformat()}_lake" + ("s_" if len(ids) > 1 else "_") + "_".join(str(i) for i in ids)
-    png, table = folder / f"{stem}_scatter.png", folder / f"{stem}_pairs.csv"
-    _plot(png, series, files["state"], day, overall)
+    suffix = ("_log" if log else "") + ("_density" if density else "")
+    png, table = folder / f"{stem}_scatter{suffix}.png", folder / f"{stem}_pairs.csv"
+    if log or density:
+        _plot_view(png, series, files["state"], day, overall, log=log, density=density)
+    else:
+        _plot(png, series, files["state"], day, overall)
     pd.concat(tables, ignore_index=True).to_csv(table, index=False)
     return {
         "png": str(png), "pairs_csv": str(table), "state": files["state"], "date": day.isoformat(),

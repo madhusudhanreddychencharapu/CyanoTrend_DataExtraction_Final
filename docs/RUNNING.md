@@ -179,6 +179,29 @@ start, the coordinator reconciles incomplete publication and interrupted attempt
 After three failed attempts a scene remains `failed`; the CLI does not silently
 reset its attempt budget. Logs/error details remain available for investigation.
 
+### Merge each date automatically: `run --auto-daily`
+
+`run --auto-daily` is optional and off by default; without it `run` does exactly what is described above.
+With it, `run` also merges a solar date once every scene that can feed that state's lakes and starts (UTC)
+from the day before to the day after is final: `done`, `skipped_no_lakes`, or `failed` after three attempts.
+(Those are the scenes of the state's plans plus any scene recorded as touching the state.) The merge is the
+`daily --start D --end D --country C --state-id S` command of section 9, started as a separate process, one at
+a time, oldest date first, with its own log in `<output>/logs/daily_*.log`. It runs in its own process so a
+crashing merge cannot stop the scene workers or the CSV publisher, and so Ctrl+C reaches only `run`.
+
+```bash
+cyanotrend --output "Output Data Notebook Parity" run --workers 5 --auto-daily
+cyanotrend --output "Output Data Notebook Parity" run --workers 5 --once --auto-daily
+```
+
+Rules: a failed scene does not block a merge (its lakes become `partial`, flagged); a date is merged again when
+the final scene statuses it was merged from change (`retry-failed`, another plan adding scenes of that date);
+nothing is ever queued by the merge: after each merge `run` prints how many scenes the date still needs that no
+plan lists, and the `plan` command that would add them; Ctrl+C or SIGTERM starts no new merge but lets the running
+one finish; with `--once`, `run` waits for the last merge before exiting; a merge that fails is recorded and not
+repeated within that `run` (the next `run` tries it again). A merge row left open by a process that died is
+marked `interrupted` by the next merge or `run`.
+
 ### Requeue all failed scenes
 
 `cyanotrend` invokes this application's CLI. `--output` selects the existing
@@ -238,8 +261,18 @@ a global unique-scene count.
 cyanotrend --output "Output Data Notebook Parity" coverage
 ```
 
+`progress` is `status` for the merge side: per planned state and solar date it counts the dates merged, ready to
+merge, waiting for scenes (with how many scenes are not final), failed, and lists merged dates whose lakes still
+wait, split into scenes in a plan that are not finished and scenes in no plan (with the `plan` command that would
+add them), the logs of failed merges, and the last 10 merges. It reads the plans and the ledger only and is safe
+while `run` is active.
+
+```bash
+cyanotrend --output "Output Data Notebook Parity" progress
+```
+
 `--json` requests structured output for the future frontend. It is a global flag,
-so it appears before `coverage`, `status`, `scenes` or `scene`.
+so it appears before `coverage`, `status`, `scenes`, `scene` or `progress`.
 
 ```bash
 cyanotrend --output "Output Data Notebook Parity" --json coverage
@@ -297,6 +330,13 @@ cell centre, with R and a regression line, and writes the PNG plus a CSV of the 
 matplotlib (`pip install matplotlib`). If the daily result is missing, the command stops and prints the
 `daily` command to run first.
 
+Two optional views of the same pairs: `--log` (log-log axes; a value of exactly 0 gets its own place left of
+and below the first tick) and `--density` (colour = number of NASA cells per small square instead of dots;
+one panel per lake); they can be combined. Each writes its own file (`..._scatter_log.png`,
+`..._scatter_density.png`, `..._scatter_log_density.png`). Without them the plot is the linear one and its
+file is never overwritten. The reason for `--log`: NASA stores whole-number DN values on a log scale, so on
+a linear axis the vertical columns at low values merge into one smear.
+
 ## 9. Merge scenes per day (S3A/S3B daily maximum)
 
 `daily` merges processed scenes per local solar date and lake on ISIN bins.
@@ -318,8 +358,13 @@ For a lake whose record belongs to Michigan, the files are:
 Output Data Notebook Parity/daily/USA/Michigan/2024/08/14/
   2024-08-14_lakes.csv
   2024-08-14_grid.nc
+  2024-08-14_science.nc
   2024-08-14_manifest.json
 ```
+
+`2024-08-14_science.nc` carries every layer of the single-scene science NetCDF (9 `rhos` bands, 5 indices, 12 masks,
+`DN`, `scenes_valid`, lake IDs) with one cell per ISIN bin. `cyanotrend reproduce <that file>` rebuilds the lakes CSV
+columns from it and compares them with the CSV.
 
 `daily --country ISO3 --state-id ID` merges only the lakes that touch that state and are filed under it,
 which is much faster than merging every lake the scenes touch. In that mode only those lakes' rows are
@@ -373,6 +418,13 @@ are not migrated or deleted.
 
 `daily` needs the catalogue (network) to build each date's checklist. Plans made
 with `--max-scenes` can leave lakes waiting; the manifest warns about them.
+
+Every merge, by hand or from `run --auto-daily`, is recorded in the ledger table `daily_runs` of
+`operations.sqlite3` (date, state, source `manual`/`auto`, start/end, lakes complete/partial/waiting/unavailable,
+scenes missing and how many of those are in no plan, a fingerprint of the final scene statuses it used, log file,
+error). The fingerprint is how `run --auto-daily` and `progress` know that a merged date is still up to date. A
+`daily` run without `--state-id` is recorded for all states and is not used for that decision. The table is
+created when the database is opened, so existing workspaces need no migration.
 
 See `SCIENCE_PARITY.md` for the same-scene HPC comparison before production scaling.
 The original notebook and real reference outputs remain your comparison material;

@@ -97,6 +97,12 @@ def parser():
         action="store_true",
         help="Exit when queued work and scheduled retries finish",
     )
+    q.add_argument(
+        "--auto-daily",
+        action="store_true",
+        help="Also merge each solar date by itself once all its scenes are final: one `daily` merge at a time, "
+        "in its own process. Off by default; never queues scenes (see `progress`)",
+    )
     q = sub.add_parser(
         "daily",
         help="Merge processed S3A/S3B scenes per local solar date and lake on ISIN bins (69120 rows, about 290 m)",
@@ -115,6 +121,7 @@ def parser():
         "(much faster than all lakes); other states' results are left untouched",
     )
     q.add_argument("--state-id", help="Exact state/province shapeID from `regions`; needs --country")
+    q.add_argument("--run-id", type=int, help=argparse.SUPPRESS)  # set by `run --auto-daily` for the merge it starts
     q = sub.add_parser(
         "lakes",
         help="Find the lakes of a state that have a merged daily row and a NASA CyAN value on a date, biggest first",
@@ -134,6 +141,12 @@ def parser():
     q.add_argument("--lake", action="append", required=True,
                    help="Lake name or Hylak_id (see `lakes`); repeat the option for several lakes")
     q.add_argument("--out-dir", help="Folder for the PNG and the CSV of the pairs (default: <output>/compare/...)")
+    q.add_argument("--log", action="store_true",
+                   help="Draw log-log axes instead of linear axes (zero gets its own place before 0.0001). "
+                        "Saved as *_scatter_log.png; the default linear PNG is not touched")
+    q.add_argument("--density", action="store_true",
+                   help="Draw a count map (colour = number of NASA cells per square) instead of dots. "
+                        "Saved as *_scatter_density.png; combine with --log for *_scatter_log_density.png")
     sub.add_parser("status", help="Queue totals, whether `run` is active, stages of running scenes and what needs attention")
     sub.add_parser("plans", help="List saved plans: dates, region, scene counts by status, and whether the plan file exists")
     q = sub.add_parser(
@@ -165,6 +178,18 @@ def parser():
         "coverage",
         help="Discovered/processed scenes by country and state (regions overlap)",
     )
+    sub.add_parser(
+        "progress",
+        help="Per state and date: merged, waiting for scenes (and how many), ready to merge, failed merges, "
+        "and merged dates whose lakes still wait",
+    )
+    q = sub.add_parser(
+        "reproduce",
+        help="Rebuild a day's lakes CSV columns from its <date>_science.nc and compare them with the CSV "
+        "(needs no workspace; changes nothing)",
+    )
+    q.add_argument("science_file", help="Path to <date>_science.nc; <date>_lakes.csv beside it is compared")
+    q.add_argument("--csv", help="Lakes CSV to compare with, if it is not beside the science file")
     q = sub.add_parser(
         "verify", help="Verify completed archive checksums and master CSV row identity"
     )
@@ -275,10 +300,14 @@ def verify(workspace, scene_id=None):
 
 
 NEEDS_WORKSPACE = ("daily", "verify", "retry-failed", "status", "plans", "cancel-plan", "cancel-queued",
-                   "scenes", "scene", "coverage", "lakes", "scatter")
+                   "scenes", "scene", "coverage", "lakes", "scatter", "progress")
 
 
 def dispatch(a):
+    if a.command == "reproduce":  # reads two files; no workspace
+        from .daily.reproduce import reproduce
+
+        return reproduce(a.science_file, a.csv)
     ws = Workspace.create(a.output, a.references, a.scratch, a.ocssw)
     if a.command in NEEDS_WORKSPACE:
         from .queue_control import require_workspace
@@ -315,7 +344,8 @@ def dispatch(a):
     if a.command == "daily":
         from .daily.merge import run_daily
 
-        return run_daily(ws, a.start, a.end, method=a.method, country=a.country, state_id=a.state_id)
+        return run_daily(ws, a.start, a.end, method=a.method, country=a.country, state_id=a.state_id,
+                         run_id=a.run_id)
     if a.command == "lakes":
         from .daily.compare import find_lakes
 
@@ -327,7 +357,7 @@ def dispatch(a):
             raise RuntimeError("The scatter plot needs matplotlib: pip install matplotlib") from None
         from .daily.compare import scatter
 
-        return scatter(ws, a.country, a.state_id, a.date, a.lake, out_dir=a.out_dir)
+        return scatter(ws, a.country, a.state_id, a.date, a.lake, out_dir=a.out_dir, log=a.log, density=a.density)
     if a.command == "run":
         from .service import serve
 
@@ -338,7 +368,7 @@ def dispatch(a):
                 os.environ["CDSE_PASSWORD"] = getpass.getpass(
                     "CDSE password (hidden): "
                 )
-        return serve(ws, a.workers, a.once)
+        return serve(ws, a.workers, a.once, auto_daily=a.auto_daily)
     if a.command == "verify":
         return verify(ws, a.scene_id)
     ledger = Ledger(ws.db)
@@ -369,6 +399,10 @@ def dispatch(a):
         return result
     if a.command == "coverage":
         return ledger.regions()
+    if a.command == "progress":
+        from .daily.auto import progress
+
+        return progress(ws, ledger)
     raise ValueError("Unknown command")
 
 

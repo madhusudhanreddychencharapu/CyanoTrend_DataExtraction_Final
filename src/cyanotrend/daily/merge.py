@@ -19,7 +19,7 @@ For each solar date:
    the valid pixels overlapping it (done per scene, in grid.py). Across scenes
    each bin keeps the highest of those values, independently for each index.
    An index has no valid data only when no scene supplied a valid value for it.
-5. Publish date-named lakes CSV, manifest JSON and grid NC under
+5. Publish date-named lakes CSV, manifest JSON, grid NC and science NC under
    <output>/daily/<country>/<state>/<year>/<month>/<day>/ for every country.
    A lake shared by several states or countries has one record, under the region
    that processed it first (regions.py). Replace this date in the daily master
@@ -45,7 +45,7 @@ from ..common import dated_region_folder, digest, file_lock, utcnow
 from ..ledger import Ledger
 from . import grid as isin
 from .regions import RegionOwners, is_region, lake_longitude, state_scope
-from .features import INDICES, FLAGS, summary as index_summary
+from .features import INDICES, FLAGS, BANDS, MASKS, summary as index_summary
 from ..schema import NASA_DETECTION_COLUMN
 
 SCHEMA = "cyanotrend-daily-3"
@@ -151,6 +151,37 @@ def merge_flags(lake_keys, contributions):
         for name in FLAGS:
             result[name] |= hit & data["flags"][name][pos]
     return result
+
+
+def merge_extras(lake_keys, contributions):
+    """Per bin, for the daily science NetCDF (nothing here changes the CSV).
+
+    rhos bands are combined like the indices: the highest scene value, independently per band (NaN
+    when no scene was valid), so a bin seen by two passes can mix them. Masks are set when any scene
+    set them. footprint is the largest single-scene footprint area; observed says that some scene
+    has this bin at all.
+    """
+    n = lake_keys.size
+    best = {name: np.full(n, -np.inf) for name in BANDS}
+    masks = {name: np.zeros(n, dtype=bool) for name in MASKS}
+    footprint = np.zeros(n)
+    observed = np.zeros(n, dtype=bool)
+    for data in contributions:
+        keys = data["key"]
+        if keys.size == 0 or n == 0:
+            continue
+        pos = np.minimum(np.searchsorted(keys, lake_keys), keys.size - 1)
+        hit = keys[pos] == lake_keys
+        observed |= hit
+        footprint = np.where(hit, np.maximum(footprint, data["footprint"][pos]), footprint)
+        for name in MASKS:
+            masks[name] |= hit & data["masks"][name][pos]
+        for name in BANDS:
+            values = np.where(hit, data["bands"][name][pos], np.nan)
+            ok = np.isfinite(values)
+            best[name] = np.where(ok & (values > best[name]), values, best[name])
+    bands = {name: np.where(np.isneginf(v), np.nan, v).astype(np.float32) for name, v in best.items()}
+    return {"bands": bands, "masks": masks, "footprint": footprint.astype(np.float32), "observed": observed}
 
 
 class LakeBins:
@@ -379,6 +410,7 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
 
     rows, cells, waiting, unavailable, partial = [], [], [], [], []
     checklist, used_days, lake_of = {}, {}, {}
+    holding_back = {}  # acquisitions some lake is still waiting for
     filed_elsewhere = 0
     limit = detection_limit()
     for i, lake in enumerate(scope.itertuples(index=False)):
@@ -394,9 +426,11 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         checklist[int(lake.Hylak_id)] = ids
         describe = {"Hylak_id": int(lake.Hylak_id), "Lake_name": _text(getattr(lake, "Lake_name", "")),
                     "states": lake.states}
-        still = [names[acquisitions[k]["ids"][0]] for k in keys if acquisitions[k]["status"] == "waiting"]
+        waiting_keys = [k for k in keys if acquisitions[k]["status"] == "waiting"]
+        still = [names[acquisitions[k]["ids"][0]] for k in waiting_keys]
         if still:
             waiting.append({**describe, "missing_scenes": still})
+            holding_back.update({k: acquisitions[k] for k in waiting_keys})
             continue
         used = [acquisitions[k]["used"] for k in keys if acquisitions[k]["status"] == "done"]
         failed = [names[acquisitions[k]["ids"][0]] for k in keys if acquisitions[k]["status"] == "failed"]
@@ -423,7 +457,7 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
         detected = valid & (value >= limit)
         dn = ci_to_dn(value, valid)
         cells.append((int(lake.Hylak_id), lake_keys, dn, value.astype(np.float32), seen,
-                      daily_indices, daily_flags))
+                      daily_indices, daily_flags, merge_extras(lake_keys, contributions)))
         satellites = sorted({str(scenes[s].get("satellite", "")) for s in used})
         rows.append({
             "date_solar": day.isoformat(),
@@ -511,6 +545,7 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
             "statistics": "per lake, finite daily bin values (maximum over scenes of the scene area-weighted means); CI uses candidate values, CI_cyano includes valid non-detections, other indices use their existing valid masks",
             "cloud_counts": "any cloud_excluded_mask observation overlapping a cell, split by availability of valid daily CI; not proof that cloud alone caused missing data",
             "detection": f"CI_cyano >= {limit:.6g} (NASA V6 DN 1)",
+            "science_nc": "<date>_science.nc: every layer of the single-scene science product on ISIN bins (rhos bands, indices, masks); bands and indices are the highest scene value per bin (rhos per band, so a bin seen twice can mix passes), masks are set when any scene set them",
         },
         "grid": isin.grid_definition(),
         "catalogue": {"bbox": list(bbox), "products_listed": len(listed)},
@@ -537,12 +572,17 @@ def merge_day(workspace, ledger, lakes, day, method, catalogue, rows_by_day, sta
             warnings.append(f"Hylak_id={hylak_id}: no country/state folder could be assigned; not listed in a folder manifest")
     folders = publish_day(workspace, day, rows, cells, manifest, checklist, region_of,
                           replace_ids=set(checklist) if only is not None else None)
+    missing = [{"name": names[info["ids"][0]], "satellite": key[0], "sensing_start": key[1],
+                "ledger_status": next((status_of[sid] for sid in info["ids"] if status_of.get(sid)), "not planned")}
+               for key, info in sorted(holding_back.items())]
     return {"date": day.isoformat(), "processed_scenes": len(processed), **counts,
-            "folders": folders, "warnings": len(warnings)}
+            "missing_scenes": len(missing),
+            "not_planned_scenes": sum(m["ledger_status"] == "not planned" for m in missing),
+            "folders": folders, "warnings": len(warnings), "_missing": missing[:50]}
 
 
 def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, admin=None,
-              country=None, state_id=None):
+              country=None, state_id=None, run_id=None):
     """Merge every solar date in [start, end]; returns one summary per date.
 
     lakes: the lake universe (default: the workspace's HydroLAKES universe, every country);
@@ -550,8 +590,11 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, 
     country + state_id: merge only the lakes that touch that state and are filed under it. That is
     the same lake selection as `plan --state-id`, and it keeps the run fast. Rows of other lakes
     in the daily master and the folders of other states are left exactly as they are.
+    run_id: the `daily_runs` row a coordinator (`run --auto-daily`) opened for this single date; without it
+    every date merged here gets its own row. Either way the ledger keeps the history of merges.
     """
     from .. import references
+    from .auto import counts_of, details_of, items_for, bucket, signature
 
     if method not in isin.METHODS:
         raise ValueError(f"Daily statistics use --method area (area-weighted binning); got {method!r}")
@@ -587,13 +630,27 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, 
 
     if bool(country) != bool(state_id):
         raise ValueError("--country and --state-id must be given together")
+    if run_id is not None and len(days) != 1:
+        raise ValueError("A merge row is opened for exactly one date")
     owners = RegionOwners(plans, membership, load_admin)
     results, ok = [], True
+    relevant = set(ledger.state_scenes(country, state_id)) if country else None
+
+    def fingerprint(day):
+        """Signature of the scene statuses this merge works from (see daily/auto.py); only per state."""
+        if relevant is None:
+            return None
+        by_day = bucket((r["id"], r["status"], d) for d, found in rows_by_day.items() for r in found if r["id"] in relevant)
+        return signature(items_for(by_day, day))
+
     with file_lock(workspace.output / "daily" / ".daily.lock"):
         from .publication import DailyPublisher
         publisher = DailyPublisher(workspace, CSV_COLUMNS)
         publisher.recover()
+        ledger.daily_close_interrupted(keep=run_id)  # we hold the lock: an older row still 'merging' is dead
         if not rows_by_day:
+            if run_id is not None:
+                ledger.daily_finish(run_id, "merged", details={"note": "no scenes in the ledger"})
             return {"ok": True, "days": [{"date": d.isoformat(), "result": "no scenes in the ledger"} for d in days]}
         if lakes is None:
             lakes = references.load_lakes(workspace, region=meta.get("lake_region", "WORLD"))
@@ -602,13 +659,20 @@ def run_daily(workspace, start, end, method="area", catalogue=None, lakes=None, 
             lakes, only = state_scope(lakes, load_admin(), country, state_id)
         cache = LakeBins(workspace, references.manifest(workspace)["reference_id"])
         for day in days:
+            sig = fingerprint(day)
+            row = run_id if run_id is not None else ledger.daily_start(
+                country, state_id, day.isoformat(), "manual", sig)
             try:
-                results.append(merge_day(workspace, ledger, lakes, day, method, catalogue,
-                                         rows_by_day, status_of, cache, capped, owners, only))
+                result = merge_day(workspace, ledger, lakes, day, method, catalogue,
+                                   rows_by_day, status_of, cache, capped, owners, only)
+                ledger.daily_finish(row, "merged", counts_of(result), details_of(result), signature=sig)
+                result.pop("_missing", None)
+                results.append(result)
             except Exception as exc:
                 from ..telemetry import redact
                 ok = False
                 results.append({"date": day.isoformat(), "error": redact(f"{type(exc).__name__}: {exc}")[:1000]})
+                ledger.daily_finish(row, "failed", error=results[-1]["error"], signature=sig)
                 if publisher.journal.exists():
                     # Finish this interrupted publication on restart before starting another date.
                     break

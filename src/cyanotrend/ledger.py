@@ -33,6 +33,13 @@ CREATE TABLE IF NOT EXISTS timings (scene_id TEXT NOT NULL, attempt INTEGER NOT 
 CREATE TABLE IF NOT EXISTS workspace_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS scene_queue ON scenes(status,next_attempt,created);
 CREATE INDEX IF NOT EXISTS timing_scene ON timings(scene_id);
+CREATE TABLE IF NOT EXISTS daily_runs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT NOT NULL DEFAULT '', state_id TEXT NOT NULL DEFAULT '',
+ date_solar TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual', state TEXT NOT NULL,
+ started TEXT NOT NULL, finished TEXT, complete_lakes INTEGER, partial_lakes INTEGER,
+ waiting_lakes INTEGER, unavailable_lakes INTEGER, missing_scenes INTEGER, not_planned_scenes INTEGER,
+ signature TEXT, log TEXT, details TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS daily_run_date ON daily_runs(country,state_id,date_solar);
 """
 
 # Everything except the (large) scene_json: enough for status, listings and the queue.
@@ -370,3 +377,115 @@ class Ledger:
         return {"removed": [sid for sid, _ in removed], "removed_by_status": by_status,
                 "unlinked_shared": [sid for sid, _ in unlinked], "left_in_plan": left,
                 "plan_removed": plan_removed}
+
+    # --- merge history: one row per daily merge (manual `daily` and `run --auto-daily`) ----------
+
+    def daily_start(self, country, state_id, day, source="manual", signature=None, log=None):
+        """Record that a merge of one solar date began. Returns the row id."""
+        with self.connect() as c:
+            return c.execute(
+                "INSERT INTO daily_runs (country,state_id,date_solar,source,state,started,signature,log) "
+                "VALUES (?,?,?,?,'merging',?,?,?)",
+                (str(country or "").upper(), str(state_id or ""), str(day), source, utcnow(), signature, log),
+            ).lastrowid
+
+    def daily_finish(self, run_id, state, counts=None, details=None, error=None, signature=None):
+        """Close a merge row. state: merged, failed or interrupted. counts: complete, partial, waiting,
+        unavailable (lakes), missing, not_planned (scenes)."""
+        counts = counts or {}
+        with self.connect() as c:
+            c.execute(
+                "UPDATE daily_runs SET state=?, finished=?, complete_lakes=?, partial_lakes=?, waiting_lakes=?, "
+                "unavailable_lakes=?, missing_scenes=?, not_planned_scenes=?, details=?, error=?, "
+                "signature=COALESCE(?,signature) WHERE id=?",
+                (state, utcnow(), counts.get("complete"), counts.get("partial"), counts.get("waiting"),
+                 counts.get("unavailable"), counts.get("missing"), counts.get("not_planned"),
+                 json.dumps(details, default=str) if details else None, error, signature, run_id),
+            )
+
+    def daily_close_interrupted(self, keep=None):
+        """A merge whose process is gone can never close its own row. Call this only while holding
+        the daily lock (so no other merge is running); `keep` is the row of the merge that holds it."""
+        with self.connect() as c:
+            c.execute(
+                "UPDATE daily_runs SET state='interrupted', finished=?, "
+                "error='the merge process stopped before it finished' WHERE state='merging' AND id IS NOT ?",
+                (utcnow(), keep),
+            )
+
+    def daily_row(self, run_id):
+        with self.connect() as c:
+            row = c.execute("SELECT * FROM daily_runs WHERE id=?", (run_id,)).fetchone()
+            return dict(row) if row else None
+
+    def daily_rows(self, country=None, state_id=None):
+        """Merge history, oldest first; limited to one state when country and state_id are given."""
+        with self.connect() as c:
+            if country:
+                rows = c.execute("SELECT * FROM daily_runs WHERE country=? AND state_id=? ORDER BY id",
+                                 (str(country).upper(), str(state_id))).fetchall()
+            else:
+                rows = c.execute("SELECT * FROM daily_runs ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
+
+    def daily_latest(self, country, state_id):
+        """{solar date: newest merge row} for one state."""
+        return {r["date_solar"]: r for r in self.daily_rows(country, state_id)}
+
+    def plan_regions(self):
+        """{(COUNTRY, state_id): {"name", "plans": [{"id", "start", "end"}]}} from the saved plans."""
+        found = {}
+        with self.connect() as c:
+            for r in c.execute("SELECT id,metadata FROM plans ORDER BY created,id"):
+                m = json.loads(r["metadata"] or "{}")
+                if not m.get("country") or not m.get("state_id"):
+                    continue
+                entry = found.setdefault((str(m["country"]).upper(), str(m["state_id"])),
+                                         {"name": m.get("state_name", ""), "plans": []})
+                entry["plans"].append({"id": r["id"], "start": m.get("start"), "end": m.get("end")})
+        return found
+
+    def state_scenes(self, country, state_id):
+        """{scene id: status} of every scene that can feed the lakes of one state: the scenes of that
+        state's plans, plus any scene (of any plan) recorded as touching the state."""
+        country, state_id = str(country).upper(), str(state_id)
+        plans = [p["id"] for p in self.plan_regions().get((country, state_id), {"plans": []})["plans"]]
+        with self.connect() as c:
+            found = {r[0]: r[1] for r in c.execute(
+                "SELECT s.id,s.status FROM scenes s JOIN scene_regions r ON r.scene_id=s.id "
+                "WHERE r.country=? AND r.state_id=?", (country, state_id))}
+            for part in _chunks(plans, 50):
+                for r in c.execute(
+                    "SELECT s.id,s.status FROM scenes s JOIN plan_scenes p ON p.scene_id=s.id "
+                    f"WHERE p.plan_id IN ({','.join('?' * len(part))})", part):
+                    found[r[0]] = r[1]
+        return found
+
+    def scene_starts(self, ids):
+        """{scene id: start time text} read without loading whole scene records where SQLite allows."""
+        found = {}
+        with self.connect() as c:
+            for part in _chunks(ids):
+                marks = ",".join("?" * len(part))
+                try:
+                    rows = c.execute(
+                        f"SELECT id, json_extract(scene_json,'$.start') FROM scenes WHERE id IN ({marks})", part)
+                    found.update({r[0]: r[1] for r in rows})
+                except sqlite3.OperationalError:  # SQLite built without JSON support
+                    rows = c.execute(f"SELECT id, scene_json FROM scenes WHERE id IN ({marks})", part)
+                    found.update({r[0]: json.loads(r[1]).get("start") for r in rows})
+        return found
+
+    def change_marker(self):
+        """Cheap fingerprint of what decides whether a date can merge: how many scenes are final (done, skipped,
+        failed), how many exist, how many plans, and the merge history. Queued -> running changes nothing here."""
+        with self.connect() as c:
+            counts = {r[0]: r[1] for r in c.execute("SELECT status,count(*) FROM scenes GROUP BY status")}
+            return (tuple(counts.get(k, 0) for k in ("done", "skipped_no_lakes", "failed")), sum(counts.values()),
+                    c.execute("SELECT count(*) FROM plans").fetchone()[0],
+                    tuple(c.execute("SELECT count(*),COALESCE(max(id),0) FROM daily_runs").fetchone()))
+
+    def status_counts(self):
+        """{status: scenes}, cheap: answered from the status index."""
+        with self.connect() as c:
+            return {r[0]: r[1] for r in c.execute("SELECT status,count(*) FROM scenes GROUP BY status")}

@@ -82,7 +82,7 @@ def reconcile(workspace, ledger, publisher, active_ids=()):
             raise
 
 
-def serve(workspace, workers=5, once=False, poll_seconds=5):
+def serve(workspace, workers=5, once=False, poll_seconds=5, auto_daily=False):
     if workers < 1:
         raise ValueError("workers must be positive")
     workspace.ensure()
@@ -98,6 +98,11 @@ def serve(workspace, workers=5, once=False, poll_seconds=5):
     ledger = Ledger(workspace.db)
     active = {}
     stopping = False
+    auto = None
+    if auto_daily:
+        from .daily.auto import AutoDaily
+
+        auto = AutoDaily(workspace, ledger)
 
     def stop(signum, frame):
         nonlocal stopping
@@ -110,6 +115,8 @@ def serve(workspace, workers=5, once=False, poll_seconds=5):
             publisher = Publisher(workspace, ledger)
             publisher.initialize()
             reconcile(workspace, ledger, publisher)
+            if auto:
+                auto.start()
             while True:
                 import_plans(workspace, ledger)
                 for sid, (proc, log) in list(active.items()):
@@ -159,19 +166,27 @@ def serve(workspace, workers=5, once=False, poll_seconds=5):
                         f"(batch {job['attempts'] - job['retry_start_attempt']}/3; {len(active)}/{workers} workers)",
                         flush=True,
                     )
+                if auto:
+                    # One merge at a time. After Ctrl-C no new merge starts; a running one is finished.
+                    auto.tick(allow_new=not stopping)
                 if not active:
+                    merging = bool(auto) and auto.running()
                     if stopping:
-                        break
-                    pending = [
-                        r
-                        for r in ledger.rows()
-                        if r["status"] in ("queued", "retry", "running", "publishing")
-                    ]
-                    if once and not pending:
-                        break
+                        if not merging:
+                            break
+                    else:
+                        pending = [
+                            r
+                            for r in ledger.rows()
+                            if r["status"] in ("queued", "retry", "running", "publishing")
+                        ]
+                        if once and not pending and not merging and not (auto and auto.has_work()):
+                            break
                 time.sleep(min(poll_seconds, 5))
     finally:
         # Unexpected coordinator errors must not leave unmanaged running jobs.
+        if auto:
+            auto.shutdown()
         for proc, log in active.values():
             if proc.poll() is None:
                 proc.terminate()
